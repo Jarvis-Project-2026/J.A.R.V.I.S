@@ -3,12 +3,13 @@
 @tailwind utilities;
 
 /* Estilo Global */
-body {
-  background-color: #000000;
+html, body, #root {
+  background-color: transparent !important; /* Fundo transparente */
   margin: 0;
   padding: 0;
+  height: 100%;
   overflow: hidden; /* Remove barras de rolagem */
-  font-family: 'Courier New', Courier, monospace; /* Fonte técnica */
+  font-family: "Courier New", Courier, monospace; /* Fonte técnica */
 }
 
 /* Scrollbar personalizada (caso precise no futuro) */
@@ -22,8 +23,12 @@ body {
 
 /* Efeito de Scanline (Linha passando na tela) */
 @keyframes scanline {
-  0% { transform: translateY(-100%); }
-  100% { transform: translateY(100vh); }
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100vh);
+  }
 }
 .scanline::before {
   content: " ";
@@ -33,7 +38,13 @@ body {
   left: 0;
   bottom: 0;
   right: 0;
-  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%),
+    linear-gradient(
+      90deg,
+      rgba(255, 0, 0, 0.06),
+      rgba(0, 255, 0, 0.02),
+      rgba(0, 0, 255, 0.06)
+    );
   z-index: 2;
   background-size: 100% 2px, 3px 100%;
   pointer-events: none;
@@ -48,26 +59,45 @@ body {
   box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
   animation: scanline 3s linear infinite;
   z-index: 10;
+
+  /* --- ACELERAÇÃO DE HARDWARE (Adicionado) --- */
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
 }
 
 /* Fundo de Grid Técnico */
 .tech-grid {
   background-size: 50px 50px;
-  background-image:
-    linear-gradient(to right, rgba(0, 208, 255, 0.05) 1px, transparent 1px),
+  background-image: linear-gradient(
+      to right,
+      rgba(0, 208, 255, 0.05) 1px,
+      transparent 1px
+    ),
     linear-gradient(to bottom, rgba(0, 208, 255, 0.05) 1px, transparent 1px);
 }
 
 /* Animação de Glitch no Texto */
 @keyframes glitch {
-  0% { transform: translate(0); }
-  20% { transform: translate(-2px, 2px); }
-  40% { transform: translate(-2px, -2px); }
-  60% { transform: translate(2px, 2px); }
-  80% { transform: translate(2px, -2px); }
-  100% { transform: translate(0); }
+  0% {
+    transform: translate(0);
+  }
+  20% {
+    transform: translate(-2px, 2px);
+  }
+  40% {
+    transform: translate(-2px, -2px);
+  }
+  60% {
+    transform: translate(2px, 2px);
+  }
+  80% {
+    transform: translate(2px, -2px);
+  }
+  100% {
+    transform: translate(0);
+  }
 }
 .animate-glitch {
-  animation: glitch 0.3s cubic-bezier(.25, .46, .45, .94) both infinite;
+  animation: glitch 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) both infinite;
   color: cyan;
 }
