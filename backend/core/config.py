@@ -26,13 +26,13 @@ class Settings:
     DIR_ROOT = ROOT_DIR
     DIR_BACKEND = BACKEND_DIR
     DIR_LOGS = BACKEND_DIR / "logs"
-    LOG_FILE_PATH = DIR_LOGS / "jarvis.log"
+    LOG_FILE_PATH = DIR_LOGS / "jarvis-"
     DIR_DATABASE = BACKEND_DIR / "database"
     DIR_SOUNDS = BACKEND_DIR / "assets" / "sounds"
     
     # --- Configurações de IA Local (Ollama) ---
     # Agora o modelo é controlado por aqui. Se mudar no .env, muda no cérebro todo.
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
     
     # Adicionado: Timeouts Globais (Robustez de Rede)
     TIMEOUT_API: int = 10  # Segundos para esperar a IA responder
@@ -47,29 +47,44 @@ class Settings:
     DB_NAME: str = "jarvis_memory.db"
     DB_PATH = DIR_DATABASE / DB_NAME
 
+    def get_current_log_path(self):
+        """Retorna o caminho da pasta logs/ANO/MES e garante que ela exista."""
+        from datetime import datetime
+        now = datetime.now()
+        
+        # Cria o caminho logs/2025/12
+        year_dir = self.DIR_LOGS / now.strftime("%Y")
+        month_dir = year_dir / now.strftime("%m")
+        
+        # Cria as pastas automaticamente conforme a demanda
+        month_dir.mkdir(parents=True, exist_ok=True)
+        year_dir.mkdir(parents=True, exist_ok=True)
+        return month_dir, year_dir
+
     def create_dirs(self):
-        """Garante que a infraestrutura de pastas exista."""
-        self.DIR_LOGS.mkdir(parents=True, exist_ok=True)
+        """Garante a infraestrutura básica (exceto logs dinâmicos)."""
         self.DIR_DATABASE.mkdir(parents=True, exist_ok=True)
         self.DIR_SOUNDS.mkdir(parents=True, exist_ok=True)
+        self.DIR_LOGS.mkdir(parents=True, exist_ok=True)
 
     def perform_sanity_check(self):
+        from .logger import log
         """
         Verificação de Saúde do Sistema (Modo Local).
         """
         # Verifica se as pastas cruciais foram criadas
         if not self.DIR_BACKEND.exists():
-            print(f"❌ ERRO FATAL: Pasta backend não encontrada em {self.DIR_BACKEND}")
+            log.critical(f"❌ ERRO FATAL: Pasta backend não encontrada em {self.DIR_BACKEND}")
             sys.exit(1)
 
         # Aviso de Modo Debug
         if self.DEBUG:
-            print(f"⚠️  AVISO: Modo DEBUG ativado. O sistema será mais verboso.")
+            log.warning("⚠️  AVISO: Modo DEBUG ativado. O sistema será mais verboso.")
 
         # Aviso Informativo sobre o Modelo
-        print(f"🧠 Modelo de IA definido: {self.OLLAMA_MODEL} (Local)")
+        log.info(f"🧠 Modelo de IA definido: {self.OLLAMA_MODEL} (Local)")
+        
 
 # Instância única
 settings = Settings()
 settings.create_dirs()
-settings.perform_sanity_check()

@@ -52,9 +52,6 @@ class Ear:
             with self.microphone as source:
                 time_since_last = time.time() - self.last_interaction_time
                 is_active_mode = time_since_last < self.conversation_timeout
-                
-                if not is_active_mode:
-                    log.info("🔵 [STANDBY]: Aguardando 'JARVIS'...")
 
                 try:
                     audio = self.recognizer.listen(source, timeout=None)
@@ -62,11 +59,8 @@ class Ear:
                     if self.is_paused: 
                         continue
 
-                    log.info("⚡ Processando...")
                     phrase = self.recognizer.recognize_google(audio, language=settings.DEFAULT_LANGUAGE).lower()
                     phrase = self._clean_text(phrase)
-                    log.info(f"👂 Ouvi: '{phrase}'")
-
                     command = None
                     trigger_found = None
                     

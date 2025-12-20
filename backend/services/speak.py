@@ -10,6 +10,7 @@ import threading
 import uuid
 from core.config import settings
 from core.logger import log
+from colorama import init, Fore, Style
 
 # --- CONFIGURAÇÕES ---
 VOICE_ONLINE = "pt-BR-AntonioNeural"
@@ -26,13 +27,24 @@ except:
     log.critical("Erro ao iniciar sistema de áudio.")
 
 # --- EFEITOS VISUAIS (CINEMÁTICA) ---
-def typewriter_effect(text):
-    """Digita o texto no terminal letra por letra"""
+def typewriter_effect(text, level="INFO"):
+    """
+    Simula a digitação mantendo o padrão de cores e prefixo do logger.
+    """
+    # Preparamos o prefixo baseado no nível (seguindo seu padrão no logger.py)
+    prefix = f"{Fore.GREEN}[INFO]{Style.RESET_ALL}"
+    if level == "WARN": prefix = f"{Fore.YELLOW}[WARN]{Style.RESET_ALL}"
+    
+    # Formata o cabeçalho do log manualmente para o efeito
+    timestamp = time.strftime('%H:%M:%S')
+    header = f"{timestamp} | {level} | {prefix} "
+    
+    sys.stdout.write(header)
     for char in text:
         sys.stdout.write(char)
         sys.stdout.flush()
-        time.sleep(0.04) 
-    log.info("")
+        time.sleep(0.04)
+    sys.stdout.write('\n') # Quebra de linha apenas no final da fala
 
 # --- TRATAMENTO DE TEXTO ---
 def _treat_text(text):

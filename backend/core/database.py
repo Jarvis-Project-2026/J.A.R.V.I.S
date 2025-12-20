@@ -116,6 +116,30 @@ class DatabaseManager:
             log.error(f"Falha ao registrar histórico: {e}")
         finally:
             conn.close()
+            
+    def search_relevant_context(self, query: str, limit: int = 3):
+        """Busca no histórico trechos relevantes para a pergunta atual."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        # Palavras que não ajudam na busca
+        stop_words = ["qual", "voce", "sobre", "meu", "minha", "como", "quem", "jarvis"]
+        search_terms = [w for w in query.split() if len(w) > 3 and w.lower() not in stop_words]
+        
+        if not search_terms: return []
+
+        # Busca flexível com LIKE
+        search_query = " OR ".join(["content LIKE ?" for _ in search_terms])
+        params = [f"%{term}%" for term in search_terms] + [limit]
+
+        try:
+            cursor.execute(f"SELECT role, content FROM history WHERE ({search_query}) ORDER BY timestamp DESC LIMIT ?", params)
+            return cursor.fetchall()
+        except Exception as e:
+            log.error(f"Erro na busca de memória: {e}")
+            return []
+        finally:
+            conn.close()
 
 # Instância Singleton global
 db = DatabaseManager()
