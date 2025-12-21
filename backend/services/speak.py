@@ -14,28 +14,26 @@ from colorama import init, Fore, Style
 
 # --- CONFIGURAÇÕES ---
 VOICE_ONLINE = "pt-BR-AntonioNeural"
-# Removemos a variável global fixa AUDIO_FILE pois agora será dinâmica
 
 # Inicializa o motor offline (Backup)
 engine_offline = pyttsx3.init()
 engine_offline.setProperty('rate', settings.SPEECH_RATE)
 
-# Inicializa o mixer do Pygame (Apenas uma vez)
+# --- SINALIZADOR DE ÁUDIO ---
+# Esse cadeado impede que duas threads falem ao mesmo tempo
+speech_lock = threading.Lock()
+
+# Inicializa o mixer
 try:
     pygame.mixer.init()
 except:
     log.critical("Erro ao iniciar sistema de áudio.")
 
-# --- EFEITOS VISUAIS (CINEMÁTICA) ---
 def typewriter_effect(text, level="INFO"):
-    """
-    Simula a digitação mantendo o padrão de cores e prefixo do logger.
-    """
-    # Preparamos o prefixo baseado no nível (seguindo seu padrão no logger.py)
+    """Simula a digitação."""
     prefix = f"{Fore.GREEN}[INFO]{Style.RESET_ALL}"
     if level == "WARN": prefix = f"{Fore.YELLOW}[WARN]{Style.RESET_ALL}"
     
-    # Formata o cabeçalho do log manualmente para o efeito
     timestamp = time.strftime('%H:%M:%S')
     header = f"{timestamp} | {level} | {prefix} "
     
@@ -44,10 +42,10 @@ def typewriter_effect(text, level="INFO"):
         sys.stdout.write(char)
         sys.stdout.flush()
         time.sleep(0.04)
-    sys.stdout.write('\n') # Quebra de linha apenas no final da fala
+    sys.stdout.write('\n')
 
-# --- TRATAMENTO DE TEXTO ---
 def _treat_text(text):
+    # (Seu código de tratamento de texto mantém igual)
     SLANG_MAP = {
         r"\bvc\b": "você",
         r"\btmj\b": "tamo junto",
@@ -61,62 +59,72 @@ def _treat_text(text):
         text = re.sub(slang, expansion, text, flags=re.IGNORECASE)
     return text.strip()
 
-# --- ONLINE ---
 async def _generate_audio_online(text, file_path):
-    # ACEITA O file_path COMO ARGUMENTO AGORA
     clean_text = _treat_text(text)
     communicate = edge_tts.Communicate(clean_text, VOICE_ONLINE, rate="+10%")
     await communicate.save(file_path)
 
-def speak_online(text):
-    # GERA UM NOME ÚNICO PARA CADA FALA
-    # Isso evita o erro de "Arquivo em uso" no Windows
+def speak_online(text, on_play=None):
     filename_path = settings.DIR_SOUNDS / f"audio_{uuid.uuid4().hex}.mp3"
     filename_str = str(filename_path)
     
     try:
-        # Passamos o filename gerado para a função
+        # 1. Gera o arquivo de áudio
         asyncio.run(_generate_audio_online(text, filename_str))
 
+        # 2. VERIFICAÇÃO DE INTEGRIDADE (A correção principal)
+        # Se o arquivo não existe ou é vazio (0 bytes), força erro para ir pro offline
+        if not os.path.exists(filename_str) or os.path.getsize(filename_str) < 100:
+            raise Exception("Arquivo de áudio gerado vazio ou corrompido.")
+
+        # 3. Toca o áudio
         pygame.mixer.music.load(filename_str)
+        
+        if on_play:
+            on_play()
+        
         pygame.mixer.music.play()
 
         visual_thread = threading.Thread(target=typewriter_effect, args=(f"[J.A.R.V.I.S]: {text}",))
         visual_thread.start()
-
+        
         while pygame.mixer.music.get_busy():
             pygame.time.Clock().tick(10)
             
         visual_thread.join()
+        pygame.mixer.music.unload()
         
-        pygame.mixer.music.unload() # Libera o arquivo do Windows
-        
-        # Agora é seguro deletar
-        if os.path.exists(filename_str):
-            os.remove(filename_str)
-        return True
-
-    except Exception as e:
-        log.info(f"[AVISO] Falha na voz online: {e}")
-        # Tenta limpar o lixo caso tenha dado erro
         if os.path.exists(filename_str):
             try: os.remove(filename_str)
             except: pass
-        return False 
+        return True
 
-# --- OFFLINE ---
+    except Exception as e:
+        log.warning(f"Falha na voz online ({e}). Tentando offline...")
+        # Limpeza caso falhe
+        if os.path.exists(filename_str):
+            try: os.remove(filename_str)
+            except: pass
+        return False
+
 def speak_offline(text):
     log.info("[MODO OFFLINE] Ativando voz de backup...")
     typewriter_effect(f"[J.A.R.V.I.S]: {text}")
-    
     clean_text = _treat_text(text)
     engine_offline.say(clean_text)
     engine_offline.runAndWait()
 
-# --- MAIN ---
-def speak(text):
-    if not speak_online(text):
-        speak_offline(text)
+# --- AQUI ESTÁ A CORREÇÃO PRINCIPAL ---
+def speak(text, play_callback=None): # <--- NOVO PARAMETRO
+    """
+    Função Thread-Safe com Callback de início de reprodução.
+    """
+    with speech_lock:
+        # Passa o callback para o método online
+        if not speak_online(text, on_play=play_callback):
+            # Se falhar e for pro offline, chama o callback também
+            if play_callback: play_callback()
+            speak_offline(text)
 
 if __name__ == "__main__":
-    speak("Protocolo de correção de áudio aplicado. Nomes de arquivos agora são dinâmicos.")
+    speak("Teste de áudio com bloqueio de thread.")

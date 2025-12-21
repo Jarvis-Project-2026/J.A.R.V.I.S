@@ -15,7 +15,7 @@ try:
     log.debug("Carregando serviços cognitivos (Audição, Fala, Cérebro)...")
     from services.listen import listen, ear_pause, ear_resume
     from services.speak import speak
-    from services.brain import execute_command
+    from services.brain import execute_command, sys_monitor, process_system_alert
     log.info("Serviços cognitivos carregados com sucesso.")
 except ImportError as e:
     log.critical(f"Falha na importação dos módulos de serviço: {e}")
@@ -24,15 +24,38 @@ except ImportError as e:
 is_running = True
 window_instance = None
 
-def update_ui(status, message):
+def update_ui(status, message=""):
     global window_instance
     if window_instance and is_running:
-        clean_msg = message.replace("'", "\\'").replace('"', '\\"').replace("\n", " ")
+        # Garante que message seja string para evitar erro no replace se vier None
+        msg_str = str(message) if message else ""
+        clean_msg = msg_str.replace("'", "\\'").replace('"', '\\"').replace("\n", " ")
+        
+        # Se mensagem for vazia, chamamos apenas com status (depende do seu JS)
+        # Mas para segurança, enviamos os dois
         script = f"if(window.receiveStatus) {{ window.receiveStatus('{status}', '{clean_msg}'); }}"
         try:
             window_instance.evaluate_js(script)
         except Exception as e:
             log.error(f"Erro na Bridge: {e}")
+            
+# Wrapper para garantir que a UI também saiba dos alertas de hardware
+def ui_aware_alert_callback(message, is_proactive=False, is_status_signal=False):
+    # Se for apenas uma mudança de estado (Ligar/Desligar luz vermelha)
+    if is_status_signal:
+        if message == "CRITICAL_START":
+            api.set_hud_state(True) # Liga o vermelho
+        elif message == "CRITICAL_END":
+            api.set_hud_state(False) # Desliga o vermelho
+        return # Não fala nada, só muda a luz
+
+    # Se for aviso de fala normal (mantém lógica antiga)
+    if is_proactive:
+        if api:
+            api.send_frontend_alert("WARNING", message)
+        update_ui("WARNING", f"ALERTA: {message}")
+    
+    process_system_alert(message, is_proactive)
 
 # --- CICLO DE VIDA DO JARVIS ---
 def jarvis_auto_loop():
@@ -40,7 +63,9 @@ def jarvis_auto_loop():
     
     time.sleep(4) 
     log.info(f"Interface Gráfica Conectada. Loop principal ativo.")
-    
+    sys_monitor.brain_callback = ui_aware_alert_callback
+    sys_monitor.start_proactive_monitor(interval=3)  # Verificações a cada 3 segundos
+
     # Exemplo de uso da memória: Recuperar nome do usuário se existir
     user_name = db.get_memory("user_name") or "Senhor"
     msg_boas_vindas = f"Sistemas sincronizados. Bem-vindo de volta, {user_name}."
@@ -61,7 +86,6 @@ def jarvis_auto_loop():
                 
                 log.info(f"Comando recebido: '{command}'")
                 update_ui("PROCESSING", f"Processando: {command}")
-                
                 response_text = execute_command(command)
 
                 if response_text == "PROTOCOL_SHUTDOWN":
@@ -83,13 +107,16 @@ def jarvis_auto_loop():
                 if response_text:
                     # SALVAR NO HISTÓRICO (Resposta do JARVIS)
                     db.log_interaction("assistant", response_text)
-                    update_ui("SPEAKING", response_text)
+                    
+                    def on_audio_start():
+                        update_ui("SPEAKING", response_text)
                     
                     try:
                         ear_pause()
-                        speak(response_text)
+                        speak(response_text, play_callback=on_audio_start)
                     finally:
                         ear_resume()
+                        update_ui("IDLE", "")
                         
         except Exception as e:
             log.error(f"Erro no loop principal: {e}")
@@ -99,7 +126,7 @@ def jarvis_auto_loop():
 
 # --- API JS <-> PYTHON ---
 window_instance = None
-api = JarvisAPI()
+api = JarvisAPI(sys_monitor)
 
 # --- INICIALIZAÇÃO ---
 def start_jarvis():

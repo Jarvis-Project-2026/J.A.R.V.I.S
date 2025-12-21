@@ -1,28 +1,13 @@
 import ollama
 import time
+import os
+import json
+import re
+import subprocess
 from core.config import settings
 from core.SystemInfo import SystemInfo
 from core.logger import log
 from core.database import db
-import os
-
-# Força o cliente Python a olhar para o IP exato onde o servidor está
-os.environ["OLLAMA_HOST"] = "127.0.0.1:11434"
-
-# --- IMPORTANDO OS SENTIDOS ---
-try:
-    from services.listen import listen, ear_pause, ear_resume
-    from services.speak import speak
-except ImportError as e:
-    log.critical(f"❌ Erro ao importar sentidos: {e}")
-
-# --- INICIALIZAÇÃO DE HARDWARE ---
-# Instanciamos o monitoramento uma vez.
-# Ele já sabe lidar com a GPU graças ao seu teste anterior.
-sys_monitor = SystemInfo()
-
-# --- MEMÓRIA DO CHAT ---
-chat_history = []
 
 # --- A ALMA DO J.A.R.V.I.S. ---
 SYSTEM_PROMPT = {
@@ -54,154 +39,406 @@ SYSTEM_PROMPT = {
     """
 }
 
+# --- CONFIGURAÇÃO E CACHE GLOBAL ---
+# Força o cliente Python a olhar para o IP exato
+os.environ["OLLAMA_HOST"] = "127.0.0.1:11434"
+
+# Cache para evitar perguntar a mesma coisa repetidamente para a IA
+# Ex: {"chrome.exe": "NAO", "python.exe": "SIM"}
+PROCESS_JUDGEMENT_CACHE = {} 
+
+# --- WRAPPER DE IA (NOVO - CENTRALIZA CONEXÕES) ---
+def query_ollama(messages, format=None, temperature=0.7):
+    """Centraliza chamadas ao Ollama para tratamento de erro e config."""
+    try:
+        from ollama import Client
+        client = Client(host='http://127.0.0.1:11434', timeout=30)
+        
+        response = client.chat(
+            model=settings.OLLAMA_MODEL, 
+            messages=messages,
+            format=format,
+            options={'temperature': temperature}
+        )
+        return response['message']['content']
+    except Exception as e:
+        log.error(f"Erro na comunicação com Ollama: {e}")
+        return None
+
+# --- IMPORTANDO OS SENTIDOS ---
+try:
+    from services.listen import listen, ear_pause, ear_resume
+    from services.speak import speak
+except ImportError as e:
+    log.critical(f"❌ Erro ao importar sentidos: {e}")
+
+def run_powershell(cmd):
+    """Executa um comando PS e retorna o objeto Python (Dict ou List)."""
+    try:
+        # Adiciona o conversor para JSON para facilitar a leitura no Python
+        full_cmd = f"powershell -Command \"{cmd} | ConvertTo-Json -Compress\""
+        
+        # Executa sem abrir janela preta (creationflags pode ser necessário em alguns casos, mas capture_output ajuda)
+        result = subprocess.run(
+            full_cmd, 
+            capture_output=True, 
+            text=True, 
+            shell=True
+        )
+        
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+            
+        return json.loads(result.stdout)
+    except Exception as e:
+        log.error(f"Erro ao executar PowerShell '{cmd}': {e}")
+        return None
+
+def scan_system_hardware():
+    """
+    Executa varredura profunda de hardware via PowerShell 
+    e popula a tabela 'hardware' do banco de dados.
+    """
+    log.info("J.A.R.V.I.S. Hardware Scan: Iniciando varredura via PowerShell...")
+    
+    # CPU
+    # Comando sugerido: Get-CimInstance Win32_Processor | Select-Object Name, MaxClockSpeed, Manufacturer
+    cpu_data = run_powershell("Get-CimInstance Win32_Processor | Select-Object Name, MaxClockSpeed, Manufacturer")
+    if cpu_data:
+        # Se houver mais de um processador, cpu_data pode ser lista. Tratamos como dict se for um só.
+        if isinstance(cpu_data, list): cpu_data = cpu_data[0]
+        name = cpu_data.get('Name', 'Desconhecido').strip()
+        clock = round(cpu_data.get('MaxClockSpeed', 0) / 1000, 2) # Converte MHz para GHz
+        db.update_hardware_spec("Processador (CPU)", f"{name} @ {clock}GHz")
+
+    # RAM
+    # Comando sugerido: Get-CimInstance Win32_PhysicalMemory
+    ram_data = run_powershell("Get-CimInstance Win32_PhysicalMemory | Select-Object Capacity, Speed, Manufacturer")
+    if ram_data:
+        if not isinstance(ram_data, list): ram_data = [ram_data]
+        
+        total_capacity = 0
+        details = []
+        for stick in ram_data:
+            cap_gb = round(stick.get('Capacity', 0) / (1024**3), 2)
+            total_capacity += cap_gb
+            details.append(f"{cap_gb}GB {stick.get('Manufacturer', '')}")
+            
+        db.update_hardware_spec("Memória RAM", f"{total_capacity} GB Total ({' + '.join(details)})")
+
+    # GPU
+    # Comando sugerido: Get-CimInstance Win32_VideoController
+    gpu_data = run_powershell("Get-CimInstance Win32_VideoController | Select-Object Name")
+    if gpu_data:
+        if not isinstance(gpu_data, list): gpu_data = [gpu_data]
+        names = " + ".join([g.get('Name', '') for g in gpu_data if g.get('Name')])
+        
+        db.update_hardware_spec("Placa de Vídeo (GPU)", names)
+
+    # Placa Mãe
+    # Comando sugerido: Get-CimInstance Win32_BaseBoard
+    mobo_data = run_powershell("Get-CimInstance Win32_BaseBoard | Select-Object Product, Manufacturer")
+    if mobo_data:
+        if isinstance(mobo_data, list): mobo_data = mobo_data[0]
+        full_name = f"{mobo_data.get('Manufacturer', '')} {mobo_data.get('Product', '')}"
+        db.update_hardware_spec("Placa Mãe", full_name.strip())
+
+    # Armazenamento (HD/SSD)
+    # Comando sugerido: Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID, VolumeName, FreeSpace, Size
+    # Filtramos por DriveType=3 (Disco Local) para evitar erro com CD-ROM vazio
+    disk_data = run_powershell("Get-CimInstance Win32_LogicalDisk | Where-Object {$_.DriveType -eq 3} | Select-Object DeviceID, Size, FreeSpace")
+    if disk_data:
+        if not isinstance(disk_data, list): disk_data = [disk_data]
+        
+        disk_info = []
+        for d in disk_data:
+            letter = d.get('DeviceID', '?')
+            total_gb = round(d.get('Size', 0) / (1024**3), 0)
+            free_gb = round(d.get('FreeSpace', 0) / (1024**3), 0)
+            disk_info.append(f"[{letter}] {total_gb}GB Total ({free_gb}GB Livre)")
+            
+        db.update_hardware_spec("Armazenamento", " | ".join(disk_info))
+
+    log.info("✅ Hardware Scan Completo. Identidade do sistema atualizada.")
+
+def process_system_alert(message, is_proactive=False):
+    if is_proactive:
+        try:
+            # 1. Identifica o culpado
+            culprit_match = re.search(r"(?:Top 5|Maiores consumos): (.*?)\s*\(", message)
+            culprit_app = culprit_match.group(1).strip() if culprit_match else None
+
+            if culprit_app:
+                # --- OTIMIZAÇÃO: Verifica Cache antes de chamar a IA ---
+                if culprit_app in PROCESS_JUDGEMENT_CACHE:
+                    decision = PROCESS_JUDGEMENT_CACHE[culprit_app]
+                    log.info(f"🧠 [CACHE]: '{culprit_app}' já foi julgado como {decision}")
+                    if "SIM" in decision: return # Silenciado pelo Cache
+                else:
+                    # Se não está no cache, pergunta para o Kernel (IA)
+                    judge_prompt = (
+                        f"Atue como Kernel. Processo: '{culprit_app}'.\n"
+                        "Consumo alto. Devo ignorar (jogos, render, ide) ou alertar (browser, desconhecido)?\n"
+                        "Responda APENAS: SIM (para permitir/silenciar) ou NAO (para alertar)."
+                    )
+                    # Usa o novo wrapper query_ollama
+                    decision = query_ollama([{'role': 'user', 'content': judge_prompt}], temperature=0)
+                    if decision:
+                        decision = decision.strip().upper()
+                        PROCESS_JUDGEMENT_CACHE[culprit_app] = decision # Salva no cache
+                    else:
+                        decision = "NAO" # Na dúvida, alerta
+
+                if "SIM" in decision:
+                    return # Silencia
+
+            # 2. Gera o Alerta (Se passou pelo filtro)
+            sys_prompt = "Você é a interface de alerta. Resuma o problema técnico e o culpado em 1 frase curta."
+            alert_text = query_ollama([
+                {'role': 'system', 'content': sys_prompt},
+                {'role': 'user', 'content': message}
+            ], temperature=0.5)
+
+            if alert_text:
+                clean_text = alert_text.replace("*", "").strip()
+                ear_pause() 
+                speak(clean_text)
+                ear_resume()
+            
+        except Exception as e:
+            log.error(f"Erro no alerta: {e}")
+
+# --- INICIALIZAÇÃO DE HARDWARE ---
+# Agora passamos a função process_system_alert como callback
+sys_monitor = SystemInfo(brain_callback=process_system_alert)
+scan_system_hardware()
+
+# --- MEMÓRIA DO CHAT ---
+chat_history = []
+
+def analyze_semantic_state(cpu, ram, gpu, batt, disk, net):
+    """
+    Gera uma narrativa de estado (Mood do JARVIS) baseada em TODOS os sensores.
+    """
+    states = []
+    
+    # --- PROCESSAMENTO (O Cérebro) ---
+    if cpu < 5:
+        states.append("STATUS CPU: OCIOSIDADE PROFUNDA (Potencial de processamento desperdiçado. Tédio detectado.)")
+    elif cpu > 90:
+        states.append("STATUS CPU: CRÍTICO (Processador em regime de esforço máximo. Risco de thermal throttling.)")
+    elif cpu > 60:
+        states.append("STATUS CPU: ALTA DEMANDA (Foco total em tarefas computacionais.)")
+
+    # --- MEMÓRIA (A Consciência) ---
+    if ram['percent'] > 90:
+        states.append("STATUS RAM: SATURAÇÃO IMINENTE (Swap file ativado. O sistema está engasgando.)")
+    elif ram['percent'] < 30:
+        states.append("STATUS RAM: DISPONIBILIDADE PLENA (Memória livre para grandes compilações.)")
+
+    # --- VÍDEO (A Visão) ---
+    # Assume-se que 'gpu' venha com chaves 'load' e 'temp'
+    if gpu.get('temp', 0) > 80:
+        states.append(f"STATUS GPU: SUPERAQUECIMENTO ({gpu['temp']}°C). Ventoinhas operando no limite audível.")
+    elif gpu.get('load', 0) > 80:
+        states.append("STATUS GPU: RENDERIZAÇÃO INTENSA (Processamento gráfico prioritário.)")
+
+    # --- REDE (A Conectividade) ---
+    # Analisa se está baixando algo pesado.
+    # O try/except garante que se o psutil mandar "10 MB/s" (com espaço) ou "GB/s", o código não quebre.
+    down_speed = net.get('download_speed', '0B/s')
+    try:
+        # Verifica apenas se é MB ou GB (KB é irrelevante para "Influxo Massivo")
+        if "MB/s" in down_speed:
+            # .replace tira a unidade | .strip tira espaços sobrando (" 15.5 " -> "15.5")
+            val = float(down_speed.replace("MB/s", "").strip())
+            
+            if val > 15.0: # Limite de 15 MB/s para considerar "Massivo"
+                states.append(f"STATUS REDE: INFLUXO MASSIVO DE DADOS ({down_speed}). Banda larga saturada.")
+                
+        elif "GB/s" in down_speed:
+             states.append(f"STATUS REDE: VELOCIDADE DE FIBRA ÓPTICA EXTREMA ({down_speed}).")
+             
+    except ValueError:
+        pass
+
+    # --- ENERGIA (A Vida) ---
+    if not batt['plugged']:
+        if batt['percent'] < 15:
+            states.append("STATUS ENERGIA: EMERGÊNCIA (Reservas esgotadas. Desligamento iminente.)")
+        elif batt['percent'] < 50:
+            states.append("STATUS ENERGIA: MODO ECONOMIA (Operando apenas com suporte vital.)")
+    else:
+        if batt['percent'] == 100:
+            states.append("STATUS ENERGIA: POTÊNCIA MÁXIMA (Reator Arc em 100%.)")
+
+    # --- ARMAZENAMENTO ---
+    if disk['free_percent'] < 10:
+        states.append("STATUS DISCO: CLAUSTROFÓBICO (Espaço de armazenamento crítico. Sugiro limpeza.)")
+
+    # Se estiver tudo normal
+    if not states:
+        states.append("STATUS GERAL: NOMINAL (Todos os sistemas operando dentro dos parâmetros ideais de Stark Industries.)")
+
+    return " | ".join(states)
+
 def get_realtime_context():
     """
-    Coleta os dados do SystemInfo e formata em texto para a IA ler.
-    É aqui que a mágica acontece.
+    Coleta TODOS os dados e aplica a camada de personalidade Stark.
     """
     try:
-        # Pega os dados brutos
+        # 1. Coleta os dados brutos
         cpu = sys_monitor.get_cpu_usage() 
         ram = sys_monitor.get_ram_usage()
         gpu = sys_monitor.get_gpu_info()
         batt = sys_monitor.get_battery_status()
+        disk = sys_monitor.get_disk_space()
+        net = sys_monitor.get_network_speed()
         
-        # Monta a 'cola' que a IA vai ler
+        # [NOVO] Coleta a lista REAL de processos para o chat não alucinar
+        # Limitamos a 3 para não poluir demais o prompt
+        top_cpu_apps = sys_monitor.get_top_processes('cpu', limit=3)
+        top_apps_str = ", ".join(top_cpu_apps) if top_cpu_apps else "Nenhum destaque"
+
+        # 2. Gera a interpretação rica
+        semantic_status = analyze_semantic_state(cpu, ram, gpu, batt, disk, net)
+        
+        # 3. Monta o contexto para o LLM
         context_str = (
-            f"[DADOS DO SISTEMA AGORA]\n"
-            f"- CPU: {cpu}%\n"
+            f"[DIAGNÓSTICO DE SISTEMA J.A.R.V.I.S.]\n"
+            f"{semantic_status}\n"
+            f"\n[TELEMETRIA TÉCNICA]\n"
+            f"- CPU: {cpu}% (Top Apps: {top_apps_str})\n"
             f"- RAM: {ram['percent']}% ({ram['used_gb']}GB usados)\n"
-            f"- GPU: {gpu['name']} (Carga: {gpu['load']}%, Temp: {gpu['temp']}°C)\n"
-            f"- Bateria: {batt['percent']}% ({batt['time_left']})\n"
+            f"- GPU: {gpu['name']} ({gpu.get('temp', 0)}°C)\n"
+            f"- Rede: ↓{net['download_speed']} | ↑{net['upload_speed']}\n"
+            f"- Disco: {disk['free_percent']:.1f}% Livre\n"
+            f"- Energia: {batt['percent']}% ({'AC' if batt['plugged'] else 'Bateria'})\n"
         )
         return context_str
+        
     except Exception as e:
         log.critical(f"⚠️ Erro ao ler sensores: {e}")
-        return "[Dados de sistema indisponíveis]"
+        return "[ERRO: Sensores offline. Impossível ler status do sistema]"
+    
+def get_detailed_hardware_context():
+    """Busca os dados estáticos do banco e formata para o Prompt."""
+    try:
+        raw_specs = db.get_system_specs() 
+        return f"\n[ARQUIVO CONFIDENCIAL DE HARDWARE - NÃO INVENTE DADOS]\n{raw_specs}"
+    except Exception as e:
+        log.error(f"Erro ao buscar contexto de hardware: {e}")
+        return ""
 
-def ask_local_ai(text):
+def classify_intent(text):
+    """ ROTEADOR DE INTENÇÃO: Classifica o comando do usuário em categorias. """
+    schema = """
+    {
+        "intent": "SHUTDOWN" | "HARDWARE" | "MEMORY_READ" | "MEMORY_WRITE" | "CHAT",
+        "confidence": float (0.0 a 1.0)
+    }
+    """
+    
+    prompt = f"""
+    Analise o comando do usuário e classifique a intenção.
+    Responda APENAS o JSON.
+    
+    CATEGORIAS:
+    - SHUTDOWN: O usuário quer explicitamente desligar, encerrar o programa, ir dormir ou sair. (Ex: "Tchau", "Desligue-se", "Pare tudo", "Encerrar protocolo").
+    - HARDWARE: Perguntas sobre especificações do PC, CPU, GPU, RAM, Benchmarks ou performance atual.
+    - MEMORY_READ: O usuário pergunta algo sobre si mesmo, preferências passadas ou fatos que você deveria lembrar. (Ex: "Qual meu nome?", "O que eu gosto de comer?").
+    - MEMORY_WRITE: O usuário pede explicitamente para você gravar/aprender algo novo. (Ex: "Lembre que eu odeio jiló", "Grave que meu CEP é X").
+    - CHAT: Qualquer outra conversa, piada, dúvida geral ou comando que não se encaixe acima.
+    
+    Frase: "{text}"
+    Schema de Resposta: {schema}
+    """
+    
+    res = query_ollama([{'role': 'user', 'content': prompt}], format='json', temperature=0)
+    try:
+        return json.loads(res)
+    except:
+        return {"intent": "CHAT"}
+
+def ask_local_ai(text, intent_type="CHAT"):
     global chat_history
     
-    # Gatilhos para ativar a varredura de memórias passadas
-    triggers = ["lembra", "quem e", "qual o meu", "qual é", "favorito", "disse", "preferencia", "gosto de", "quando", "onde"]
-    past_context = ""
+    sys_instruction = SYSTEM_PROMPT['content']
+    hw_context = ""
+    mem_context = ""
+
+    # Injeção Dinâmica
+    if intent_type == "HARDWARE":
+        hw_context = f"\n[DADOS DE HARDWARE]:\n{get_detailed_hardware_context()}\nUSE ISSO."
+        sys_instruction += hw_context
     
-    if any(t in text.lower() for t in triggers):
-        log.info("🔍 J.A.R.V.I.S.: Iniciando varredura de memória hierárquica...")
+    elif intent_type == "MEMORY_READ":
+        # Busca híbrida (Exata + Semântica)
+        memories = []
+        words = [w for w in text.split() if len(w) > 3]
+        for w in words: # 1. Busca Exata
+            val = db.get_memory(w)
+            if val: memories.append(f"{w}: {val}")
         
-        # --- BUSCA NA TABELA MEMORY (Fatos Secos - Otimizada) ---
-        # Extraímos palavras relevantes da pergunta para testar como 'chaves' no banco
-        potential_keys = [w.lower() for w in text.split() if len(w) > 3]
-        found_facts = []
+        related = db.search_relevant_context(text) # 2. Busca Semântica
+        if related: memories.append("Histórico: " + " | ".join([c[1] for c in related]))
         
-        for key in potential_keys:
-            # Tenta buscar a chave exata na tabela memory
-            val = db.get_memory(key)
-            if val:
-                found_facts.append(f"{key}: {val}")
-        
-        if found_facts:
-            log.info("✅ Fato específico encontrado na Memória de Longo Prazo.")
-            facts_str = " | ".join(found_facts)
-            past_context = f"\n[CONHECIMENTO ESTABELECIDO]: {facts_str}"
-        
-        # --- BUSCA NA TABELA HISTORY (Backup - Contexto Amplo) ---
-        # Só executa a busca pesada de texto se o Nível 1 não retornou nada satisfatório
-        else:
-            log.info("🔎 Nada na memória direta. Vasculhando histórico de conversas...")
-            # Busca por palavras-chave na coluna content da tabela history
-            related_data = db.search_relevant_context(text)
-            if related_data:
-                history_facts = " | ".join([f"{r}: {c}" for r, c in related_data])
-                past_context = f"\n[CONTEXTO RECUPERADO DO HISTÓRICO]: {history_facts}"
+        if memories: mem_context = f"\n[MEMÓRIA]: {'; '.join(memories)}"
 
-    # --- PROCESSAMENTO IA ---
-    # Adiciona a pergunta atual ao histórico da sessão antes de enviar
-    chat_history.append({'role': 'user', 'content': text})
+    # Prompt Final
+    live_data = get_realtime_context()
+    messages = [
+        {'role': 'system', 'content': sys_instruction},
+        {'role': 'system', 'content': f"LIVE DATA: {live_data}{mem_context}"}
+    ] + chat_history + [{'role': 'user', 'content': text}]
 
-    # Coleta telemetria de hardware (CPU, RAM, GPU)
-    current_telemetry = get_realtime_context()
+    # Temperatura dinâmica: Fria para Hardware, Quente para Chat
+    temp = 0.1 if intent_type == "HARDWARE" else 0.7
     
-    # Monta o payload final combinando: Prompt de Sistema + Telemetria + Memória Recuperada + Chat Atual
-    messages_payload = [
-        SYSTEM_PROMPT,
-        {'role': 'system', 'content': f"{current_telemetry}{past_context}"}
-    ] + chat_history
-
-    try:
-        from ollama import Client
-        client = Client(host='http://127.0.0.1:11434', timeout=30)
-        response = client.chat(model=settings.OLLAMA_MODEL, messages=messages_payload)
-        reply = response['message']['content']
-        
-        # Limpeza de caracteres especiais para a voz
-        clean_reply = reply.replace("*", "").replace("#", "").strip()
-        
-        # Adiciona a resposta do J.A.R.V.I.S ao histórico da sessão
-        chat_history.append({'role': 'assistant', 'content': clean_reply})
-        
-        # Mantém a janela de memória de curto prazo curta (últimas 6 interações)
-        if len(chat_history) > 10: 
-            chat_history = chat_history[-6:]
-
-        return clean_reply
-    except Exception as e:
-        log.critical(f"❌ Erro Detalhado na Conexão IA: {e}") # Mostra o erro real no terminal
-        return "Senhor, houve uma falha técnica no processamento neural."
+    # Usa o novo wrapper
+    reply = query_ollama(messages, temperature=temp)
+    
+    if reply:
+        clean = reply.replace("*", "").replace("#", "").strip()
+        chat_history.append({'role': 'assistant', 'content': clean})
+        if len(chat_history) > 6: chat_history = chat_history[-6:]
+        return clean
+    return "Erro de processamento neural."
 
 def execute_command(command):
-    cmd = command.lower()
-    
-    # --- GATILHO DE MEMÓRIA PROATIVA (Longo-prazo) ---
-    # Identifica ordens de gravação
-    memory_triggers = ["lembre que", "guarde que", "anote que", "registre que", "memorize que", "salve que"]
-    if any(trigger in cmd for trigger in memory_triggers):
-        log.info("🧠 J.A.R.V.I.S.: Processando extração de fato para memória de longo prazo...")
-        speak("Sim senhor, estou agora mesmo guardando esses dados na minha memória.")
-        feedback = extract_fact_to_memory(command)
-        if feedback:
-            return feedback
-    
-    # Lista expandida de gatilhos de encerramento
-    shutdown_triggers = ["desligar", "encerrar protocolo", "chega por hoje", "tchau", "sair", "fechar", "finalizar", "encerrar"]
+    # O J.A.R.V.I.S. "Pensa" primeiro
+    decision = classify_intent(command)
+    intent = decision.get("intent")
+    log.info(f"🧠 [INTENÇÃO DETECTADA]: {intent} (Confiança: {decision.get('confidence')})")
 
-    if any(trigger in cmd for trigger in shutdown_triggers):
-        log.warning("Sinal de desligamento detectado pelo cérebro.")
+    # Executa a ação baseada na decisão semântica
+    
+    if intent == "SHUTDOWN":
         return "PROTOCOL_SHUTDOWN"
-    
-    if "reiniciar memória" in cmd:
-        global chat_history
-        chat_history = []
-        return "Memória formatada. Quem é o senhor mesmo?"
 
-    # IA Generativa
-    log.info(f"💻 [LLAMA-3.2]: Processando '{command}'...")
-    return ask_local_ai(command)
+    # --- CASO 2: GRAVAR MEMÓRIA (Antigo extract_memories) ---
+    elif intent == "MEMORY_WRITE":
+        speak("Processando nova memória...") # Feedback de áudio
+        return extract_fact_to_memory(command)
+
+    # --- CASO 3: CONSULTAS (Hardware, Memória ou Chat Geral) ---
+    else:
+        # Passamos a intenção para o ask_local_ai preparar o contexto correto
+        return ask_local_ai(command, intent_type=intent)
 
 def extract_fact_to_memory(text):
-    """
-    Usa a IA para converter uma frase natural em um par Chave: Valor.
-    Ex: 'guarde que meu aniversário é em maio' -> 'aniversario: Maio'
-    """
     prompt = f"""
     Extraia o fato principal da frase abaixo para um banco de dados de memória.
     Responda APENAS no formato chave:valor (sem espaços extras, sem frases ou explicações).
     
     Frase: "{text}"
     """
-    try:
-        # Chamada direta ao Ollama apenas para extração
-        response = ollama.chat(model=settings.OLLAMA_MODEL, messages=[{'role': 'user', 'content': prompt}])
-        result = response['message']['content'].strip()
-        
-        if ":" in result:
-            key, value = result.split(":", 1)
-            # Salva na tabela memory (Key-Value) do seu database.py
-            db.save_memory(key.strip().lower(), value.strip()) 
-            return f"Entendido, senhor. Memorizei que {key.strip()} é {value.strip()}."
-    except Exception as e:
-        log.error(f"Erro ao extrair fato: {e}")
-    return None
+    res = query_ollama([{'role': 'user', 'content': prompt}], temperature=0)
+    if res and ":" in res:
+        k, v = res.split(":", 1)
+        db.save_memory(k.strip().lower(), v.strip())
+        return f"Memorizado: {k.strip()}."
+    return "Não consegui extrair o fato."
 
 def start_brain():
     """Loop Principal"""
@@ -209,6 +446,10 @@ def start_brain():
     
     # Frase inicial clássica
     speak("Importando preferências virtuais... pronto. À sua disposição, senhor.")
+
+    # --- LIGAR MONITORAMENTO ---
+    # Verifica a cada 30s o HARDWARE
+    sys_monitor.start_proactive_monitor(interval=30)
 
     while True:
         try:
