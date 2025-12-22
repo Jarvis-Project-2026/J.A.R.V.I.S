@@ -5,10 +5,8 @@ import os
 import threading
 
 # Importa as configurações, o Logger e agora a Memória (Database)
-from core.config import settings
-from core.logger import log 
-from core.database import db
-from core.bridge import JarvisAPI
+from core import settings, log, db, JarvisAPI
+
 
 # --- IMPORTAÇÃO DOS MÓDULOS ---
 try:

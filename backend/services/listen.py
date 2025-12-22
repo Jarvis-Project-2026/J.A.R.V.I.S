@@ -1,8 +1,8 @@
 import speech_recognition as sr
 import time
 import re
-from core.config import settings
-from core.logger import log
+from core import settings, log
+
 
 class Ear:
     def __init__(self):

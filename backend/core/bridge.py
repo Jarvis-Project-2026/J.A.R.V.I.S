@@ -1,6 +1,7 @@
 import webview
 import json
-from core.logger import log
+from .logger import log
+
 
 class JarvisAPI:
     """

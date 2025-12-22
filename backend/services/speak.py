@@ -8,8 +8,8 @@ import sys
 import time
 import threading
 import uuid
-from core.config import settings
-from core.logger import log
+from core import settings, log
+
 from colorama import init, Fore, Style
 
 # --- CONFIGURAÇÕES ---

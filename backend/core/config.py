@@ -33,6 +33,7 @@ class Settings:
     # --- Configurações de IA Local (Ollama) ---
     # Agora o modelo é controlado por aqui. Se mudar no .env, muda no cérebro todo.
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+    OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "localhost:11434")
     
     # Adicionado: Timeouts Globais (Robustez de Rede)
     TIMEOUT_API: int = 10  # Segundos para esperar a IA responder

@@ -4,10 +4,8 @@ import os
 import json
 import re
 import subprocess
-from core.config import settings
-from core.SystemInfo import SystemInfo
-from core.logger import log
-from core.database import db
+from core import settings, SystemInfo, log, db, manager
+
 
 # --- A ALMA DO J.A.R.V.I.S. ---
 SYSTEM_PROMPT = {
@@ -40,8 +38,8 @@ SYSTEM_PROMPT = {
 }
 
 # --- CONFIGURAÇÃO E CACHE GLOBAL ---
-# Força o cliente Python a olhar para o IP exato
-os.environ["OLLAMA_HOST"] = "127.0.0.1:11434"
+# Força o cliente Python a olhar para o IP configurado
+os.environ["OLLAMA_HOST"] = settings.OLLAMA_HOST
 
 # Cache para evitar perguntar a mesma coisa repetidamente para a IA
 # Ex: {"chrome.exe": "NAO", "python.exe": "SIM"}
@@ -52,7 +50,12 @@ def query_ollama(messages, format=None, temperature=0.7):
     """Centraliza chamadas ao Ollama para tratamento de erro e config."""
     try:
         from ollama import Client
-        client = Client(host='http://127.0.0.1:11434', timeout=30)
+        # Garante que usamos o host configurado, com protocolo http se não especificado
+        host = settings.OLLAMA_HOST
+        if not host.startswith("http"):
+            host = f"http://{host}"
+        
+        client = Client(host=host, timeout=30)
         
         response = client.chat(
             model=settings.OLLAMA_MODEL, 
@@ -172,28 +175,40 @@ def process_system_alert(message, is_proactive=False):
                 # --- OTIMIZAÇÃO: Verifica Cache antes de chamar a IA ---
                 if culprit_app in PROCESS_JUDGEMENT_CACHE:
                     decision = PROCESS_JUDGEMENT_CACHE[culprit_app]
-                    log.info(f"🧠 [CACHE]: '{culprit_app}' já foi julgado como {decision}")
-                    if "SIM" in decision: return # Silenciado pelo Cache
                 else:
-                    # Se não está no cache, pergunta para o Kernel (IA)
+                    # Se não está no cache, pergunta para o Kernel (IA) baseado em criticidade
+                    # SIM = Permitir/Ignorar (Jogo, IDE) | NAO = Alertar (Travado, Browser)
                     judge_prompt = (
                         f"Atue como Kernel. Processo: '{culprit_app}'.\n"
                         "Consumo alto. Devo ignorar (jogos, render, ide) ou alertar (browser, desconhecido)?\n"
-                        "Responda APENAS: SIM (para permitir/silenciar) ou NAO (para alertar)."
+                        "Responda APENAS: SIM (para permitir/ignorar o alerta) ou NAO (para alertar o usuário)."
                     )
-                    # Usa o novo wrapper query_ollama
                     decision = query_ollama([{'role': 'user', 'content': judge_prompt}], temperature=0)
                     if decision:
                         decision = decision.strip().upper()
-                        PROCESS_JUDGEMENT_CACHE[culprit_app] = decision # Salva no cache
-                    else:
-                        decision = "NAO" # Na dúvida, alerta
+                        PROCESS_JUDGEMENT_CACHE[culprit_app] = decision
 
                 if "SIM" in decision:
-                    return # Silencia
+                    log.info(f"🔇 [KERNEL]: Silenciando alerta para '{culprit_app}'")
+                    return 
 
-            # 2. Gera o Alerta (Se passou pelo filtro)
-            sys_prompt = "Você é a interface de alerta. Resuma o problema técnico e o culpado em 1 frase curta."
+                # Se DEVE alertar (NAO IGNORAR):
+                global pending_critical_action
+                pending_critical_action = {
+                    'type': 'KILL_PROCESS', 
+                    'target': culprit_app, 
+                    'timeout': time.time() + 30 # 30 segundos para responder
+                }
+                
+                alert_text = f"Alerta de sistema: O processo {culprit_app} está com consumo crítico. Deseja que eu o encerre?"
+                
+                ear_pause() 
+                speak(alert_text)
+                ear_resume()
+                return # Retorna para evitar o alerta genérico abaixo
+
+            # 2. Gera o Alerta Genérico (Sem culpado claro ou erro de parsing)
+            sys_prompt = "Você é a interface de alerta. Resuma o problema técnico em 1 frase curta."
             alert_text = query_ollama([
                 {'role': 'system', 'content': sys_prompt},
                 {'role': 'user', 'content': message}
@@ -215,6 +230,8 @@ scan_system_hardware()
 
 # --- MEMÓRIA DO CHAT ---
 chat_history = []
+# Contexto para ações proativas que aguardam autorização do usuário (Ex: Fechar app pesado)
+pending_critical_action = None 
 
 def analyze_semantic_state(cpu, ram, gpu, batt, disk, net):
     """
@@ -235,6 +252,12 @@ def analyze_semantic_state(cpu, ram, gpu, batt, disk, net):
         states.append("STATUS RAM: SATURAÇÃO IMINENTE (Swap file ativado. O sistema está engasgando.)")
     elif ram['percent'] < 30:
         states.append("STATUS RAM: DISPONIBILIDADE PLENA (Memória livre para grandes compilações.)")
+
+    # --- DISCO (Armazenamento) ---
+    if disk['percent'] > 95:
+         states.append("STATUS DISCO: CRÍTICO (Espaço em disco esgotado. Falhas de I/O iminentes.)")
+    elif disk['percent'] > 85:
+         states.append("STATUS DISCO: ALERTA (Pouco espaço livre. Limpeza recomendada.)")
 
     # --- VÍDEO (A Visão) ---
     # Assume-se que 'gpu' venha com chaves 'load' e 'temp'
@@ -261,6 +284,14 @@ def analyze_semantic_state(cpu, ram, gpu, batt, disk, net):
              
     except ValueError:
         pass
+        
+    # Monitor de Instabilidade (Pacotes perdidos ou Erros)
+    # Assumindo que 'net' tenha chaves 'errin', 'errout', 'dropin', 'dropout' (SystemInfo deve prover isso)
+    net_errors = net.get('errin', 0) + net.get('errout', 0)
+    net_drops = net.get('dropin', 0) + net.get('dropout', 0)
+    
+    if net_errors > 50 or net_drops > 50:
+         states.append("STATUS REDE: INSTABILIDADE (Detectados pacotes perdidos ou erros na transmissão. Conexão degradada.)")
 
     # --- ENERGIA (A Vida) ---
     if not batt['plugged']:
@@ -332,33 +363,63 @@ def get_detailed_hardware_context():
 
 def classify_intent(text):
     """ ROTEADOR DE INTENÇÃO: Classifica o comando do usuário em categorias. """
-    schema = """
-    {
-        "intent": "SHUTDOWN" | "HARDWARE" | "MEMORY_READ" | "MEMORY_WRITE" | "CHAT",
+    
+    # 1. Recupera as skills ativas para inserir no Schema (Isso guia a IA para não alucinar intents)
+    active_skills = list(manager.skills.keys())
+    valid_intents = ["SHUTDOWN", "HARDWARE", "MEMORY_READ", "MEMORY_WRITE", "CHAT"] + active_skills
+    
+    # Formata como: "SHUTDOWN" | "HARDWARE" | "OPEN_APP" ...
+    options_str = " | ".join([f'"{opt}"' for opt in valid_intents])
+
+    schema = f"""
+    {{
+        "intent": {options_str},
+        "entity": "string (o objeto da ação, ex: 'spotify', 'luz', ou null se não houver)",
         "confidence": float (0.0 a 1.0)
-    }
+    }}
     """
-    
+    # Pegamos as descrições das skills para o contexto semântico
+    skills_prompts = "\n    ".join(manager.prompts)
     prompt = f"""
-    Analise o comando do usuário e classifique a intenção.
-    Responda APENAS o JSON.
+    Sua missão é classificar a intenção do comando do usuário e extrair a entidade principal.
     
-    CATEGORIAS:
-    - SHUTDOWN: O usuário quer explicitamente desligar, encerrar o programa, ir dormir ou sair. (Ex: "Tchau", "Desligue-se", "Pare tudo", "Encerrar protocolo").
-    - HARDWARE: Perguntas sobre especificações do PC, CPU, GPU, RAM, Benchmarks ou performance atual.
-    - MEMORY_READ: O usuário pergunta algo sobre si mesmo, preferências passadas ou fatos que você deveria lembrar. (Ex: "Qual meu nome?", "O que eu gosto de comer?").
-    - MEMORY_WRITE: O usuário pede explicitamente para você gravar/aprender algo novo. (Ex: "Lembre que eu odeio jiló", "Grave que meu CEP é X").
-    - CHAT: Qualquer outra conversa, piada, dúvida geral ou comando que não se encaixe acima.
+    # REGRAS CRÍTICAS:
+    1. Responda APENAS o JSON, sem texto adicional.
+    2. Se houver um nome de aplicativo ou objeto no comando, ele DEVE ir para o campo 'entity'.
+    3. Nunca use "null" para 'entity' se houver um substantivo alvo na frase.
+    4. Priorize as SKILLS DINÂMICAS. Use "CHAT" apenas se for uma saudação ou conversa vazia.
+
+    # DEFINIÇÃO DE CATEGORIAS:
+    - SHUTDOWN: Comando para desligar o seu próprio sistema.
+    - HARDWARE: Perguntas técnicas sobre CPU, RAM, GPU.
+    - {options_str}: Categorias válidas para este comando.
+
+    # SKILLS E SEUS OBJETIVOS:
+    {skills_prompts}
     
-    Frase: "{text}"
+    # EXEMPLOS:
+    - "Boa noite, Jarvis" -> {{"intent": "SHUTDOWN", "entity": null, "confidence": 1.0}}
+    - "fechar o spotify" -> {{"intent": "APP_CONTROL", "entity": "spotify", "confidence": 1.0}}
+    - "abrir a calculadora" -> {{"intent": "APP_CONTROL", "entity": "calculadora", "confidence": 1.0}}
+    - "como está meu pc?" -> {{"intent": "HARDWARE", "entity": null, "confidence": 1.0}}
+
+    Comando do Usuário: "{text}"
     Schema de Resposta: {schema}
     """
     
-    res = query_ollama([{'role': 'user', 'content': prompt}], format='json', temperature=0)
     try:
-        return json.loads(res)
-    except:
-        return {"intent": "CHAT"}
+        res = query_ollama([{'role': 'user', 'content': prompt}], format='json', temperature=0)
+        if not res: return {"intent": "CHAT", "entity": None, "confidence": 0.0}
+        
+        result = json.loads(res)
+        # Sanitização básica para evitar None no log
+        if not result.get("intent"): result["intent"] = "CHAT"
+        if "confidence" not in result: result["confidence"] = 0.5
+        
+        return result
+    except Exception as e:
+        log.error(f"Erro no parsing do Classificador: {e}")
+        return {"intent": "CHAT", "entity": None, "confidence": 0.0}
 
 def ask_local_ai(text, intent_type="CHAT"):
     global chat_history
@@ -406,13 +467,37 @@ def ask_local_ai(text, intent_type="CHAT"):
     return "Erro de processamento neural."
 
 def execute_command(command):
+    global pending_critical_action
+
+    # 0. Verifica se estamos aguardando uma confirmação urgente (Ex: Fechar App)
+    if pending_critical_action:
+        # Verifica timeout de 15 segundos
+        if time.time() > pending_critical_action['timeout']:
+            pending_critical_action = None # Expirou
+        else:
+            # Verifica palavras de aceitação
+            affirmation_words = ["sim", "pode", "feche", "encerre", "faça", "ok", "confirmo", "autorizo", "vai"]
+            if any(w in command.lower().split() for w in affirmation_words):
+                target = pending_critical_action['target']
+                log.info(f"✅ Autorização recebida para encerrar {target}")
+                
+                # Executa a ação via Skill
+                if "APP_CONTROL" in manager.skills:
+                    skill = manager.skills["APP_CONTROL"]
+                    res = skill.execute(target, f"fechar {target}")
+                    pending_critical_action = None # Limpa
+                    return res
+            
+            # Se o usuário falou algo nada a ver, limpamos a pendência e seguimos o fluxo normal
+            pending_critical_action = None
+
     # O J.A.R.V.I.S. "Pensa" primeiro
     decision = classify_intent(command)
     intent = decision.get("intent")
+    entity = decision.get("entity")
     log.info(f"🧠 [INTENÇÃO DETECTADA]: {intent} (Confiança: {decision.get('confidence')})")
 
-    # Executa a ação baseada na decisão semântica
-    
+    # --- CASO 1: DESLIGAR O SISTEMA ---
     if intent == "SHUTDOWN":
         return "PROTOCOL_SHUTDOWN"
 
@@ -420,29 +505,56 @@ def execute_command(command):
     elif intent == "MEMORY_WRITE":
         speak("Processando nova memória...") # Feedback de áudio
         return extract_fact_to_memory(command)
+    
+    # --- CASO 3: SKILLS CARREGADAS DINAMICAMENTE ---
+    elif intent in manager.skills:
+        # Pega o módulo correspondente e roda a função execute dele
+        skill_module = manager.skills[intent]
+        return skill_module.execute(entity, command)
 
-    # --- CASO 3: CONSULTAS (Hardware, Memória ou Chat Geral) ---
+    # --- CASO 4: CONSULTAS (Hardware, Memória ou Chat Geral) ---
     else:
         # Passamos a intenção para o ask_local_ai preparar o contexto correto
         return ask_local_ai(command, intent_type=intent)
 
 def extract_fact_to_memory(text):
     prompt = f"""
-    Extraia o fato principal da frase abaixo para um banco de dados de memória.
-    Responda APENAS no formato chave:valor (sem espaços extras, sem frases ou explicações).
+    Analise a frase e extraia o fato principal para ser salvo na memória de longo prazo.
+    Onde:
+    - 'key': uma palavra-chave curta (ex: 'nome_usuario', 'time_futebol', 'comida_favorita', 'faculdade').
+    - 'value': o dado concreto a ser salvo.
     
     Frase: "{text}"
+    
+    Responda APENAS o JSON no formato:
+    {{
+        "key": "...",
+        "value": "..."
+    }}
     """
-    res = query_ollama([{'role': 'user', 'content': prompt}], temperature=0)
-    if res and ":" in res:
-        k, v = res.split(":", 1)
-        db.save_memory(k.strip().lower(), v.strip())
-        return f"Memorizado: {k.strip()}."
-    return "Não consegui extrair o fato."
+    try:
+        # Forçamos o modo JSON nativo do Ollama
+        res_str = query_ollama([{'role': 'user', 'content': prompt}], format='json', temperature=0)
+        
+        if res_str:
+            data = json.loads(res_str)
+            key = data.get("key")
+            val = data.get("value")
+            
+            if key and val:
+                # Normaliza a chave para evitar duplicatas (ex: 'Faculdade' -> 'faculdade')
+                clean_key = key.strip().lower().replace(" ", "_")
+                db.save_memory(clean_key, val.strip())
+                return f"Memorizado: {clean_key} = {val}."
+                
+    except Exception as e:
+        log.error(f"Erro ao extrair memória: {e}")
+        
+    return "Não consegui extrair o fato com clareza."
 
 def start_brain():
     """Loop Principal"""
-    log.info("\nConectado à Interface Neural Llama 3.1:8b.")
+    log.info(f"\nConectado à Interface Neural {settings.OLLAMA_MODEL} em {settings.OLLAMA_HOST}")
     
     # Frase inicial clássica
     speak("Importando preferências virtuais... pronto. À sua disposição, senhor.")

@@ -10,8 +10,8 @@ Use os checkboxes para marcar o que já foi implementado e visualizar claramente
 
 ### A. Gestão de Aplicações e Processos
 
-* [ ] **Lançador de Apps** — Abrir qualquer software instalado por nome (VS Code, Navegador, Spotify, Calculadora)
-* [ ] **Encerramento de Tarefas** — Fechar janelas específicas ou finalizar processos travados
+* ✅ **Lançador de Apps** — Abrir qualquer software instalado por nome (VS Code, Navegador, Spotify, Calculadora) (*app_control.py*)
+* ✅ **Encerramento de Tarefas** — Fechar janelas específicas ou finalizar processos travados (*app_control.py*)
 * [ ] **Protocolo de Limpeza** — Esvaziar lixeira, limpar arquivos temporários e apagar apps por comando de voz
 
 ### B. Controle Periférico e Global
@@ -24,21 +24,21 @@ Use os checkboxes para marcar o que já foi implementado e visualizar claramente
 
 * [ ] **Cenas de Trabalho (Macros)** — Ex: "Modo Code" abre editor, terminal e docs
 * [ ] **Injeção de Atalhos** — Executar atalhos de teclado via voz
-* [ ] **Diagnóstico Proativo** — Alertas automáticos de temperatura e bateria, com ações corretivas
+* ✅ **Diagnóstico Proativo** — Alertas automáticos de temperatura e bateria, com ações corretivas (*brain.py*)
 
 ### D. Consciência de Ambiente e Rede (The Sentry)
 
-* [ ] **Monitor de Conectividade** — Análise de qualidade de internet e alertas de instabilidade
-* [ ] **Gestão de Armazenamento** — Monitoramento proativo de HD/SSD
+* ✅ **Monitor de Conectividade** — Análise de qualidade de internet e alertas de instabilidade (*brain.py*)
+* [ ] **Gestão de Armazenamento** — Monitoramento proativo de HD/SSD (*brain.py*)
 
 ### E. Interação de Interface Inteligente (The HUD Sync)
 
-* [ ] **Feedback Visual Sincronizado** — UI muda conforme estado do sistema
-* [ ] **Foco de Janela Contextual** — Comandos genéricos atuam no app ativo
+* ✅ **Feedback Visual Sincronizado** — UI muda conforme estado do sistema (*bridge.py*)
+* ✅ **Foco de Janela Contextual** — Comandos genéricos atuam no app ativo (*app_control.py*)
 
 ### F. Protocolos de Resposta Proativa (The Butler)
 
-* [ ] **Sugestão de Recursos** — Recomenda encerramento de processos ao detectar RAM alta
+* [ ] **Sugestão de Recursos** — Recomenda encerramento de processos ao detectar RAM alta (*brain.py*)
 * [ ] **Saudação de Status (Boot Protocol)** — Relatório inicial com status do sistema
 
 ---
