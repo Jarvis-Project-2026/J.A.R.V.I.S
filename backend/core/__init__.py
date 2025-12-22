@@ -1,5 +1,10 @@
 import logging
 from .config import settings
+from .logger import log
+from .database import db
+from .skill_loader import manager
+from .SystemInfo import SystemInfo
+from .bridge import JarvisAPI
 
 # --- 1. Filtro de Poluição (Noise Reduction) ---
 # Silencia bibliotecas que "falam demais" no console
@@ -14,10 +19,4 @@ LIBRARIES_TO_SILENCE = [
 for lib in LIBRARIES_TO_SILENCE:
     logging.getLogger(lib).setLevel(logging.WARNING)
 
-# --- 2. Exports ---
-# Comentei o SystemInfo por enquanto para não dar erro se o arquivo não existir.
-# Assim que criar o SystemInfo.py, pode descomentar.
-# from .SystemInfo import SystemInfo 
-
-__all__ = ["settings"] 
-# __all__ = ["settings", "SystemInfo"]
+__all__ = ["settings", "log", "db", "manager", "SystemInfo", "JarvisAPI"]

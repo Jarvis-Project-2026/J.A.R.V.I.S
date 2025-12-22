@@ -1,128 +1,207 @@
-import { useRef, useMemo, useEffect } from "react";
+import React, { useRef, useMemo } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import * as THREE from "three";
-import { EffectComposer, Bloom, ChromaticAberration, Noise, Vignette } from "@react-three/postprocessing";
-import { OrbitControls, Sparkles } from "@react-three/drei";
+import { EffectComposer, Bloom } from "@react-three/postprocessing";
+import * as THREE from "three"; 
 
-// --- Função Auxiliar ---
-function generateSpherePoints(count, radius) {
-  const points = new Float32Array(count * 3);
-  for (let i = 0; i < count; i++) {
-    const i3 = i * 3;
-    const theta = THREE.MathUtils.randFloatSpread(360);
-    const phi = THREE.MathUtils.randFloatSpread(360);
-    
-    const x = radius * Math.sin(theta) * Math.cos(phi);
-    const y = radius * Math.sin(theta) * Math.sin(phi);
-    const z = radius * Math.cos(theta);
-    
-    points[i3] = x;
-    points[i3 + 1] = y;
-    points[i3 + 2] = z;
-  }
-  return points;
-}
-
-// --- Componente de Camada ---
-function ParticlesLayer({ count, radius, size, color, baseSpeed, opacity, speedMultiplier, isSpeaking }) {
+// --- CAMADA DE PARTÍCULAS ---
+function ParticlesLayer({ 
+  count, 
+  radius, 
+  size, 
+  targetColor, 
+  baseSpeed, 
+  speedMultiplier, 
+  opacity, 
+  isSpeaking, 
+  isCritical 
+}) {
   const pointsRef = useRef();
-  const mouseRef = useRef({ x: 0, y: 0 });
+  const materialRef = useRef(); 
 
-  useEffect(() => {
-    const handleMouseMove = (event) => {
-      mouseRef.current.x = (event.clientX / window.innerWidth) * 2 - 1;
-      mouseRef.current.y = -(event.clientY / window.innerHeight) * 2 + 1;
-    };
-    window.addEventListener("mousemove", handleMouseMove);
-    return () => window.removeEventListener("mousemove", handleMouseMove);
-  }, []);
+  // Gera posições iniciais
+  const { positions, initialPositions } = useMemo(() => {
+    const positions = new Float32Array(count * 3);
+    const initialPositions = new Float32Array(count * 3);
 
-  const initialPositions = useMemo(() => generateSpherePoints(count, radius), [count, radius]);
-  const currentPositions = useMemo(() => new Float32Array(initialPositions), [initialPositions]);
+    for (let i = 0; i < count; i++) {
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      
+      const x = radius * Math.sin(phi) * Math.cos(theta);
+      const y = radius * Math.sin(phi) * Math.sin(theta);
+      const z = radius * Math.cos(phi);
+
+      positions[i * 3] = x;
+      positions[i * 3 + 1] = y;
+      positions[i * 3 + 2] = z;
+
+      initialPositions[i * 3] = x;
+      initialPositions[i * 3 + 1] = y;
+      initialPositions[i * 3 + 2] = z;
+    }
+    return { positions, initialPositions };
+  }, [count, radius]);
 
   useFrame((state, delta) => {
     if (pointsRef.current) {
       const time = state.clock.elapsedTime;
-      const geometry = pointsRef.current.geometry;
       
-      const currentSpeed = baseSpeed * speedMultiplier;
-      pointsRef.current.rotation.y -= delta * currentSpeed * 0.2;
-      
-      pointsRef.current.rotation.x = THREE.MathUtils.lerp(pointsRef.current.rotation.x, mouseRef.current.y * 0.2, 0.05);
-      pointsRef.current.rotation.z = THREE.MathUtils.lerp(pointsRef.current.rotation.z, -mouseRef.current.x * 0.2, 0.05);
+      // 1. ROTAÇÃO
+      const criticalSpeedBoost = isCritical ? 2.0 : 1.0;
+      pointsRef.current.rotation.y += delta * baseSpeed * speedMultiplier * criticalSpeedBoost;
 
+      const currentPositions = pointsRef.current.geometry.attributes.position.array;
+      
+      // 2. SIMULAÇÃO DE VOZ (O Pulo do Gato - VERSÃO SUAVE)
+      let simulatedIntensity = 0;
+      
       if (isSpeaking) {
-         for (let i = 0; i < count; i++) {
-            const i3 = i * 3;
-            const ox = initialPositions[i3];
-            const oy = initialPositions[i3 + 1];
-            const oz = initialPositions[i3 + 2];
-
-            const wave1 = Math.sin(oy * 2.5 + time * 8.0) * 0.3;
-            const wave2 = Math.cos(ox * 2.0 + time * 6.0) * 0.2;
-            const noise = Math.sin(oz * 5.0 + time * 3.0) * 0.1;
-            const distortion = 1 + (wave1 + wave2 + noise) * 0.4;
-
-            currentPositions[i3] = ox * distortion;
-            currentPositions[i3 + 1] = oy * distortion;
-            currentPositions[i3 + 2] = oz * distortion;
-         }
-      } else {
-        for (let i = 0; i < count; i++) {
-          const i3 = i * 3;
-          currentPositions[i3] += (initialPositions[i3] - currentPositions[i3]) * 0.05;
-          currentPositions[i3+1] += (initialPositions[i3+1] - currentPositions[i3+1]) * 0.05;
-          currentPositions[i3+2] += (initialPositions[i3+2] - currentPositions[i3+2]) * 0.05;
-        }
+        // CORREÇÃO: Reduzimos a velocidade (time * X) e suavizamos a onda
+        // Antes estava time * 15 (muito rápido). Agora usamos ondas lentas sobrepostas.
+        const slowWave = Math.sin(time * 2); // Respiração base
+        const fastWave = Math.cos(time * 6); // Modulação da fala
+        
+        // Normalizamos para ficar entre 0.0 e 0.8
+        simulatedIntensity = (Math.abs(slowWave * 0.6 + fastWave * 0.4)) + 0.1;
+      }
+      
+      // Se estiver crítico, mantemos a tensão
+      if (isCritical) {
+         simulatedIntensity += 0.2; 
       }
 
-      geometry.attributes.position.array = currentPositions;
-      geometry.attributes.position.needsUpdate = true;
+      const hasActivity = isSpeaking || isCritical;
+
+      // 3. FÍSICA DAS PARTÍCULAS
+      for (let i = 0; i < count; i++) {
+        const i3 = i * 3;
+        
+        const ix = initialPositions[i3];
+        const iy = initialPositions[i3 + 1];
+        const iz = initialPositions[i3 + 2];
+
+        let targetX = ix;
+        let targetY = iy;
+        let targetZ = iz;
+
+        if (hasActivity) {
+          const vibration = isCritical ? Math.sin(time * 15 + i) * 0.05 : 0;
+          
+          // Isso evita que a esfera "exploda" visualmente
+          const voiceWave = isSpeaking 
+            ? Math.sin(iy * 2.0 + time * 3.0) * (0.25 * simulatedIntensity) 
+            : 0;
+
+          const pulse = 1 + voiceWave + vibration;
+          
+          targetX = ix * pulse;
+          targetY = iy * pulse;
+          targetZ = iz * pulse;
+        }
+
+        // LERP (Suavização do movimento)
+        const smoothingFactor = 0.03;
+
+        currentPositions[i3] += (targetX - currentPositions[i3]) * smoothingFactor;
+        currentPositions[i3 + 1] += (targetY - currentPositions[i3 + 1]) * smoothingFactor;
+        currentPositions[i3 + 2] += (targetZ - currentPositions[i3 + 2]) * smoothingFactor;
+      }
+
+      pointsRef.current.geometry.attributes.position.needsUpdate = true;
+    }
+
+    // 4. COR
+    if (materialRef.current) {
+      const targetColorObj = new THREE.Color(targetColor);
+      materialRef.current.color.lerp(targetColorObj, 0.02);
     }
   });
 
   return (
     <points ref={pointsRef}>
       <bufferGeometry>
-        <bufferAttribute attach="attributes-position" count={currentPositions.length / 3} array={currentPositions} itemSize={3} />
+        <bufferAttribute
+          attach="attributes-position"
+          count={positions.length / 3}
+          array={positions}
+          itemSize={3}
+        />
       </bufferGeometry>
       <pointsMaterial
+        ref={materialRef}
         size={size}
-        color={new THREE.Color(color).multiplyScalar(isSpeaking ? 3.0 : 1.5)} 
-        transparent opacity={opacity} blending={THREE.AdditiveBlending}
-        sizeAttenuation={true} toneMapped={false}
+        color={targetColor}
+        transparent
+        opacity={opacity}
+        blending={THREE.AdditiveBlending}
+        sizeAttenuation={true}
+        depthWrite={false}
       />
     </points>
   );
 }
 
-// --- Componente Principal ---
-export default function ParticleSphere({ state = "idle" }) {
+// --- COMPONENTE PRINCIPAL ---
+export default function ParticleSphere({ state = "idle", isCritical = false }) {
   const isSpeaking = state === 'speaking';
+  
+  // Não precisamos mais do hook de áudio real, a simulação interna cuida disso.
+
   const config = {
-    idle: { speed: 1.0, coreColor: "#4fd1c5", bloom: 1.5 },
-    listening: { speed: 0.2, coreColor: "#ffffff", bloom: 0.8 },
-    speaking: { speed: 1.5, coreColor: "#00eaff", bloom: 3.0 },
+    idle: { speed: 0.2, coreColor: "#00d0ff", bloom: 1.0 },
+    listening: { speed: 0.1, coreColor: "#ffffff", bloom: 0.5 },
+    speaking: { speed: 1.5, coreColor: "#00eaff", bloom: 2.5 }, // Velocidade alta quando fala
   };
-  const activeConfig = config[state] || config.idle;
+  
+  let activeConfig = config[state] || config.idle;
+
+  // Lógica de Override Crítico
+  let coreTargetColor = activeConfig.coreColor;
+  let auraTargetColor = "#0066ff"; 
+  let targetBloom = activeConfig.bloom;
+
+  if (isCritical) {
+    coreTargetColor = "#ff0000"; 
+    auraTargetColor = "#ff3300"; 
+    targetBloom = 3.5; 
+  }
 
   return (
-    <div className="w-full h-full relative z-20 transition-all duration-700 ease-in-out">
-      <Canvas camera={{ position: [0, 0, 6], fov: 45 }} gl={{ alpha: true }}>
-        <ambientLight intensity={0.5} />
-
-        <ParticlesLayer count={5000} radius={1.6} size={0.025} color={activeConfig.coreColor} baseSpeed={0.2} speedMultiplier={activeConfig.speed} opacity={0.95} isSpeaking={isSpeaking} />
-        <ParticlesLayer count={2000} radius={3.2} size={0.03} color="#00d0ff" baseSpeed={0.05} speedMultiplier={activeConfig.speed} opacity={0.5} isSpeaking={isSpeaking} />
-        <Sparkles count={100} scale={12} size={4} speed={0.4} opacity={0.2} color="#00d0ff" />
-
-        {/* --- O SEGREDO DO "LOOK" DE FILME --- */}
+    <div className="w-full h-full relative z-20">
+      <Canvas camera={{ position: [0, 0, 6], fov: 45 }}>
+        
+        {/* Núcleo */}
+        <ParticlesLayer 
+          count={4000} 
+          radius={1.6} 
+          size={0.02} 
+          targetColor={coreTargetColor} 
+          baseSpeed={0.2} 
+          speedMultiplier={activeConfig.speed} 
+          opacity={0.9} 
+          isSpeaking={isSpeaking}
+          isCritical={isCritical}
+        />
+        
+        {/* Aura */}
+        <ParticlesLayer 
+          count={1500} 
+          radius={3.0} 
+          size={0.03} 
+          targetColor={auraTargetColor}
+          baseSpeed={0.1} 
+          speedMultiplier={activeConfig.speed} 
+          opacity={0.4} 
+          isSpeaking={isSpeaking}
+          isCritical={isCritical}
+        />
+        
         <EffectComposer disableNormalPass>
-          <Bloom luminanceThreshold={0.2} luminanceSmoothing={0.9} height={300} intensity={activeConfig.bloom} />
-          <ChromaticAberration offset={[0.002, 0.002]} />
-          <Noise opacity={0.02} />
-          <Vignette eskil={false} offset={0.1} darkness={1.1} />
+          <Bloom 
+            intensity={targetBloom} 
+            luminanceThreshold={0.2} 
+          />
         </EffectComposer>
-
       </Canvas>
     </div>
   );

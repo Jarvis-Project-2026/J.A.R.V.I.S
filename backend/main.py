@@ -5,16 +5,15 @@ import os
 import threading
 
 # Importa as configurações, o Logger e agora a Memória (Database)
-from core.config import settings
-from core.logger import log 
-from core.database import db
+from core import settings, log, db, JarvisAPI
+
 
 # --- IMPORTAÇÃO DOS MÓDULOS ---
 try:
     log.debug("Carregando serviços cognitivos (Audição, Fala, Cérebro)...")
     from services.listen import listen, ear_pause, ear_resume
     from services.speak import speak
-    from services.brain import execute_command
+    from services.brain import execute_command, sys_monitor, process_system_alert
     log.info("Serviços cognitivos carregados com sucesso.")
 except ImportError as e:
     log.critical(f"Falha na importação dos módulos de serviço: {e}")
@@ -23,23 +22,48 @@ except ImportError as e:
 is_running = True
 window_instance = None
 
-def update_ui(status, message):
-    """Envia comando para o Frontend mudar o visual"""
+def update_ui(status, message=""):
     global window_instance
     if window_instance and is_running:
-        safe_msg = message.replace("'", "").replace('"', "")
+        # Garante que message seja string para evitar erro no replace se vier None
+        msg_str = str(message) if message else ""
+        clean_msg = msg_str.replace("'", "\\'").replace('"', '\\"').replace("\n", " ")
+        
+        # Se mensagem for vazia, chamamos apenas com status (depende do seu JS)
+        # Mas para segurança, enviamos os dois
+        script = f"if(window.receiveStatus) {{ window.receiveStatus('{status}', '{clean_msg}'); }}"
         try:
-            window_instance.evaluate_js(f"window.receiveStatus('{status}', '{safe_msg}')")
+            window_instance.evaluate_js(script)
         except Exception as e:
-            log.error(f"Falha ao atualizar UI (Bridge Python-JS): {e}")
+            log.error(f"Erro na Bridge: {e}")
+            
+# Wrapper para garantir que a UI também saiba dos alertas de hardware
+def ui_aware_alert_callback(message, is_proactive=False, is_status_signal=False):
+    # Se for apenas uma mudança de estado (Ligar/Desligar luz vermelha)
+    if is_status_signal:
+        if message == "CRITICAL_START":
+            api.set_hud_state(True) # Liga o vermelho
+        elif message == "CRITICAL_END":
+            api.set_hud_state(False) # Desliga o vermelho
+        return # Não fala nada, só muda a luz
+
+    # Se for aviso de fala normal (mantém lógica antiga)
+    if is_proactive:
+        if api:
+            api.send_frontend_alert("WARNING", message)
+        update_ui("WARNING", f"ALERTA: {message}")
+    
+    process_system_alert(message, is_proactive)
 
 # --- CICLO DE VIDA DO JARVIS ---
 def jarvis_auto_loop():
     global is_running, window_instance
     
-    time.sleep(2) 
+    time.sleep(4) 
     log.info(f"Interface Gráfica Conectada. Loop principal ativo.")
-    
+    sys_monitor.brain_callback = ui_aware_alert_callback
+    sys_monitor.start_proactive_monitor(interval=3)  # Verificações a cada 3 segundos
+
     # Exemplo de uso da memória: Recuperar nome do usuário se existir
     user_name = db.get_memory("user_name") or "Senhor"
     msg_boas_vindas = f"Sistemas sincronizados. Bem-vindo de volta, {user_name}."
@@ -60,27 +84,37 @@ def jarvis_auto_loop():
                 
                 log.info(f"Comando recebido: '{command}'")
                 update_ui("PROCESSING", f"Processando: {command}")
-                
                 response_text = execute_command(command)
 
-                # Protocolo de desligamento
                 if response_text == "PROTOCOL_SHUTDOWN":
-                    log.warning("Protocolo de desligamento iniciado.")
-                    is_running = False
-                    break
+                    log.warning("Iniciando sequência de encerramento total.")
+                    update_ui("PROCESSING", "Desconectando...")
+                    
+                    try:
+                        ear_pause()
+                        speak("Desativando núcleo de força. Até logo, Senhor.")
+                    finally:
+                        is_running = False
+                        if window_instance:
+                            window_instance.destroy() # Fecha a interface gráfica
+                        
+                        log.info("Aplicação encerrada com sucesso.")
+                        os._exit(0) # Mata todos os processos e threads imediatamente
+                        break
 
                 if response_text:
                     # SALVAR NO HISTÓRICO (Resposta do JARVIS)
                     db.log_interaction("assistant", response_text)
                     
-                    log.info(f"Resposta: '{response_text}'")
-                    update_ui("SPEAKING", response_text)
+                    def on_audio_start():
+                        update_ui("SPEAKING", response_text)
                     
                     try:
                         ear_pause()
-                        speak(response_text)
+                        speak(response_text, play_callback=on_audio_start)
                     finally:
                         ear_resume()
+                        update_ui("IDLE", "")
                         
         except Exception as e:
             log.error(f"Erro no loop principal: {e}")
@@ -89,39 +123,31 @@ def jarvis_auto_loop():
     log.info("Loop principal encerrado.")
 
 # --- API JS <-> PYTHON ---
-class JarvisAPI:
-    def __init__(self): self._window = None
-    def set_window(self, window): self._window = window
-    def shutdown(self):
-        global is_running
-        log.warning("Shutdown via UI")
-        is_running = False
-        if self._window: self._window.destroy()
+window_instance = None
+api = JarvisAPI(sys_monitor)
 
 # --- INICIALIZAÇÃO ---
 def start_jarvis():
-    global window_instance
+    global window_instance, api
+    settings.perform_sanity_check()
     log.info(f"Inicializando {settings.PROJECT_NAME} v{settings.VERSION}")
-    
-    api = JarvisAPI()
     html_path = str(settings.DIR_ROOT / 'frontend' / 'dist' / 'index.html')
 
     if not os.path.exists(html_path):
         log.critical(f"Frontend não encontrado em: {html_path}")
         window_instance = webview.create_window('Erro', html='<h1>Erro Crítico: Frontend não encontrado</h1>')
+        return
         
-    else:
-        window_instance = webview.create_window(
-            title=settings.PROJECT_NAME,
-            url=html_path,
-            width=1920,
-            height=1080,
-            frameless=True,
-            js_api=api,
-            resizable=True,
-            transparent=False,
-            background_color='#000000'
-        )
+    window_instance = webview.create_window(
+        title=settings.PROJECT_NAME,
+        url=html_path,
+        js_api=api,
+        fullscreen=True,
+        frameless=True,
+        background_color='#000000',
+        easy_drag=True,
+        
+    )
 
     api.set_window(window_instance)
     t = threading.Thread(target=jarvis_auto_loop, daemon=True)
@@ -130,4 +156,9 @@ def start_jarvis():
     webview.start(debug=settings.DEBUG)
 
 if __name__ == '__main__':
-    start_jarvis()
+    try:
+        start_jarvis()
+    except KeyboardInterrupt:
+        log.info("Aplicação finalizada pelo usuário.")
+        import os
+        os._exit(0)

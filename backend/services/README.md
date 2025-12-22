@@ -1,100 +1,106 @@
 # 🧠 Documentação do Módulo Services
 
-Este diretório contém a lógica central do sistema J.A.R.V.I.S., dividida em três responsabilidades principais: **Input (Audição)**, **Processamento (Cérebro)** e **Output (Fala)**.
+Este diretório contém a lógica neural e sensorial do sistema J.A.R.V.I.S., orquestrando **Input (Audição)**, **Processamento Cognitivo (Cérebro)** e **Output (Fala)**.
 
 ## 📂 Estrutura de Arquivos
 
-| Arquivo | Função | Principais Bibliotecas |
-| --- | --- | --- |
-| **`brain.py`** | Controlador central, gerencia o fluxo de decisão e conecta-se à IA (Ollama). | `ollama`, `sys`, `os` |
-| **`listen.py`** | Captura de áudio, detecção de *Wake Word* e transcrição (STT). | `speech_recognition`, `re` |
-| **`speak.py`** | Síntese de voz (TTS) híbrida (Online/Offline) e reprodução de áudio. | `edge_tts`, `pygame`, `pyttsx3` |
+| Arquivo         | Função                                                                                                    | Principais Dependências                   |
+| --------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| **`brain.py`**  | **Núcleo Cognitivo.** Gerencia intenções, hardware, memória de longo prazo e conexões com a LLM (Ollama). | `core`, `ollama`, `sqlite3`, `subprocess` |
+| **`listen.py`** | **Entrada Sensorial.** Captura de áudio, detecção de _Wake Word_ e transcrição (STT).                     | `core`, `speech_recognition`, `re`        |
+| **`speak.py`**  | **Saída Sensorial.** Síntese de voz (TTS) híbrida com gerenciamento de concorrência (Thread-Safe).        | `core`, `edge_tts`, `pygame`, `pyttsx3`   |
 
 ---
 
 ## 1. `brain.py` (O Maestro)
 
-O cérebro é responsável por orquestrar a interação. Ele inicia o loop principal, decide se o comando é uma função do sistema ou uma pergunta para a IA Generativa, e gerencia o histórico de conversa.
+O cérebro deixou de ser um script linear e tornou-se um **Roteador Semântico**. Ele não apenas reage, mas "pensa" antes de agir, classificando a intenção do usuário e gerenciando a identidade da máquina em tempo real.
 
-### Funcionalidades Chave:
+### 🌟 Novas Funcionalidades Arquiteturais
 
-* **System Prompt (Persona):** Define a personalidade do J.A.R.V.I.S. (Britânico, sarcástico, conciso) e impõe regras estritas de formatação (sem markdown, sem listas) para otimizar a síntese de voz.
-* **Memória de Curto Prazo:** Mantém um histórico deslizante (`chat_history`) das últimas 6-10 interações para manter o contexto da conversa sem estourar a janela de contexto do modelo.
-* **Roteador de Comandos (`execute_command`):**
-* **Hardcoded:** Intercepta comandos críticos como "desligar" ou "reiniciar memória" antes de consultar a IA.
-* **Generativo:** Envia o texto para o modelo local `llama3.1:8b` via Ollama.
+#### A. Roteador de Intenção (`classify_intent`)
 
+Em vez de buscar palavras-chave soltas (if/else), o sistema envia a frase para a LLM (em modo JSON) para classificar a demanda em 5 categorias estritas:
 
-* **Controle de Feedback:** Utiliza `ear_pause()` e `ear_resume()` para "tapar os ouvidos" enquanto fala, evitando que o J.A.R.V.I.S. ouça a si mesmo e entre em loop.
+1. **SHUTDOWN:** Encerramento de protocolos.
+2. **HARDWARE:** Perguntas sobre specs, benchmarks ou status do PC.
+3. **MEMORY_READ:** Usuário perguntando sobre fatos passados.
+4. **MEMORY_WRITE:** Usuário pedindo para gravar uma nova informação.
+5. **CHAT:** Conversa genérica/criativa.
 
-### Fluxo de Execução:
+#### B. Identidade de Hardware Persistente (`scan_system_hardware`)
 
-1. Inicializa e cumprimenta.
-2. Entra em Loop Infinito `while True`.
-3. Ouve (`listen()`) -> Processa (`execute_command()`) -> Fala (`speak()`).
+Ao iniciar, o sistema executa uma **varredura via PowerShell** para identificar a máquina hospedeira (CPU, GPU Real, RAM, Placa Mãe).
+
+- Esses dados são salvos no banco de dados SQLite (`core.database`).
+- **Anti-Alucinação:** Se o usuário pergunta "Qual meu PC?", o sistema injeta esses dados reais no Prompt do Sistema, impedindo a IA de inventar configurações.
+
+#### C. Monitoramento Proativo com "Cache do Juiz"
+
+O sistema monitora recursos em background (`sys_monitor`). Para evitar spam de alertas:
+
+- **O Juiz:** Quando um processo consome muita CPU, a IA decide se é perigoso ou seguro (ex: Jogos = Seguro).
+- **O Cache:** Essa decisão é salva em memória (`PROCESS_JUDGEMENT_CACHE`). Se o "Chrome" já foi julgado, o sistema não gasta tokens perguntando novamente.
+
+#### D. Prompt Dinâmico (`ask_local_ai`)
+
+O Contexto do Sistema é montado em tempo real (_Injeção de Dependência de Contexto_):
+
+- **Se Intenção == HARDWARE:** Injeta tabela técnica do banco de dados.
+- **Se Intenção == MEMORY_READ:** Injeta fatos recuperados do SQLite.
+- **Temperatura Variável:** Usa temperatura `0.1` (fria) para dados técnicos e `0.7` (quente) para conversas casuais.
 
 ---
 
 ## 2. `listen.py` (Os Ouvidos)
 
-Responsável pela **transcrição de áudio para texto (STT)**. Utiliza a Google Speech Recognition API para alta precisão em Português-BR.
+Responsável pela **transcrição de áudio para texto (STT)**. Mantém a lógica de "Janela de Atenção" para conversas fluidas.
 
-### Funcionalidades Chave:
+### Funcionalidades Chave
 
-* **Calibração de Ruído:** Ao iniciar, o sistema escuta o ambiente por 1 segundo para ajustar o limiar de ruído (`adjust_for_ambient_noise`).
-* **Sistema de Wake Word (Palavra-chave):**
-* Utiliza **Regex (`\bword\b`)** para detectar variações do nome (Jarvis, Jarbas, Javis) dentro de uma frase.
-* Remove o nome da frase antes de processar o comando (Ex: "Jarvis que horas são" vira "que horas são").
+- **Wake Word Flexível:** Detecta variações como _'jarvis', 'jar', 'jair', 'jarbas'_. Utiliza Regex (`\bword\b`) para limpar o nome da frase antes do processamento.
+- **Janela de Atenção (Active Mode):**
+- Ao ouvir o nome, ativa um **Timer de 60 segundos**.
+- Durante este tempo, não é necessário repetir "Jarvis".
 
-* **Janela de Conversação (Active Mode):**
-* Se o usuário falar o nome "Jarvis", um **Timer de 60 segundos** é ativado.
-* Dentro dessa janela, não é necessário repetir o nome "Jarvis". O sistema aceita qualquer fala direta.
-* Após 60s de inatividade, ele volta para o modo Standby (esperando o nome).
+- **Controle de Loop de Áudio:**
+- Expõe métodos `ear_pause()` e `ear_resume()`.
+- O `brain.py` usa isso para "tapar os ouvidos" enquanto o próprio JARVIS está falando, evitando que ele ouça a própria voz.
 
-* **Filtros de Cancelamento:** Ignora comandos se detectar palavras como "esquece", "cancelar" ou "deixa quieto".
+- **Calibração Automática:** Ajusta o limiar de ruído ambiente no primeiro segundo de execução.
 
 ---
 
 ## 3. `speak.py` (A Voz)
 
-Responsável pela **síntese de texto para áudio (TTS)**. Possui uma arquitetura híbrida robusta para garantir que o J.A.R.V.I.S. sempre consiga falar.
+Responsável pela **síntese de texto para áudio (TTS)**. Atualizado para ser _Thread-Safe_ e visualmente interativo.
 
 ### Funcionalidades Chave:
 
-* **Modo Online (Principal):**
-* Utiliza a biblioteca **`edge_tts`** (motor neural da Microsoft Azure via Edge).
-* Voz configurada: `pt-BR-AntonioNeural` (Voz masculina natural).
-* Aceleração: `rate="+10%"` para maior fluidez.
+**Arquitetura Híbrida (Failover):** 1.**Online (EdgeTTS):** Tenta gerar áudio neural de alta qualidade (`pt-BR-AntonioNeural`). Verifica integridade do arquivo (tamanho > 100 bytes). 2.**Offline (Pyttsx3):** Se a internet cair ou o arquivo falhar, assume o motor robótico local imediatamente.
 
-* **Modo Offline (Backup):**
-* Se a internet falhar ou o `edge_tts` der erro, ativa automaticamente o **`pyttsx3`** (voz robótica do sistema operacional).
+- **Thread Safety (`speech_lock`):**
+- Implementa um `threading.Lock()` para impedir que múltiplas requisições de fala se sobreponham (ex: um alerta de sistema tentando falar em cima de uma resposta de chat).
 
-* **Gerenciamento de Arquivos Dinâmicos:**
-* Utiliza `uuid` para gerar nomes de arquivos de áudio temporários únicos (ex: `audio_a1b2...mp3`).
-* Isso soluciona o erro de *PermissionError* do Windows, evitando conflito de arquivos em uso.
-* O arquivo é deletado imediatamente após a reprodução.
+- **Feedback Visual:**
+- Executa o efeito de "datilografia" (`typewriter_effect`) no terminal em uma Thread separada, sincronizada com o áudio.
 
-* **Efeito Datilógrafo:**
-* Uma Thread paralela exibe o texto no terminal letra por letra (`typewriter_effect`) sincronizado com o áudio.
+- **Tratamento de Gírias:**
+- Expande abreviações (`vc` -> `você`, `tmj` -> `tamo junto`) via Regex antes de enviar para o motor de voz.
 
-* **Tratamento de Gírias:**
-* A função `_treat_text` expande abreviações (vc -> você, tmj -> tamo junto) antes de enviar para a IA de voz, garantindo a pronúncia correta.
+- **Gerenciamento de Arquivos:** Usa `uuid` para arquivos temporários, evitando conflitos de permissão de arquivo no Windows.
 
 ---
 
-## ⚙️ Dependências do Sistema
+## ⚙️ Fluxo de Dados (Pipeline)
 
-Para que este módulo funcione, o ambiente Python deve ter:
+1. **Inicialização:** `brain.py` varre o hardware via PowerShell -> Salva no SQLite.
+2. **Input:** `listen.py` detecta voz -> Transcreve para Texto.
+3. **Decisão:** `brain.py` -> `classify_intent()` -> Ollama (JSON Mode).
+4. **Roteamento:**
 
-```txt
-ollama
-SpeechRecognition
-pyaudio (para microfone)
-edge-tts
-pygame
-pyttsx3
-python-dotenv
+- _Se for Hardware:_ Busca specs no SQLite -> Injeta no Prompt -> Responde.
+- _Se for Memória:_ Grava ou Busca no SQLite -> Responde.
+- _Se for Chat:_ Busca telemetria tempo real (`SystemInfo`) -> Responde.
 
-```
-
-*Nota: É necessário ter o servidor **Ollama** rodando localmente com o modelo `llama3.1:8b` baixado.*
+  5.**Output:** `speak.py` (Bloqueia Thread) -> Gera Áudio -> Toca + Texto no Terminal -> (Libera Thread).
