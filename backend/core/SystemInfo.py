@@ -27,6 +27,8 @@ class SystemInfo:
             'ram_max': 90.0,
             'gpu_temp_max': 75.0,
             'disk_space_min': 10.0,
+            'disk_min_gb_warning': 20.0,
+            'disk_min_gb_critical': 10.0,
             'battery_min': 15.0
         }
 
@@ -72,12 +74,62 @@ class SystemInfo:
             bytes /= factor
             
     def get_disk_space(self):
-        """Novo: Verifica espaço em disco (Crítico para saúde do sistema)"""
+        """Retorna uma LISTA com dados de todos os discos físicos montados."""
+        disks_data = []
         try:
-            disk = psutil.disk_usage('/')
-            free_percent = 100 - disk.percent
-            return {"total": self._get_size(disk.total), "free_percent": free_percent}
-        except: return {"total": "0B", "free_percent": 100}
+            # Itera sobre todas as partições (C:, D:, etc.)
+            for partition in psutil.disk_partitions(all=False):
+                # Filtra CD-ROMs, pendrives vazios ou sistemas de arquivos virtuais
+                if 'cdrom' in partition.opts or partition.fstype == '':
+                    continue
+                
+                try:
+                    usage = psutil.disk_usage(partition.mountpoint)
+                    free_gb = usage.free / (1024**3)
+                    
+                    disks_data.append({
+                        "mount": partition.mountpoint,              # Ex: "C:\"
+                        "total": self._get_size(usage.total),       # Ex: "500GB"
+                        "free_gb": round(free_gb, 1),               # Ex: 15.5 (Float para lógica)
+                        "percent": usage.percent,                   # % Usado
+                        "free_percent": 100 - usage.percent         # % Livre
+                    })
+                except PermissionError:
+                    continue
+                    
+        except Exception as e:
+            log.error(f"Erro ao ler discos: {e}")
+            
+        return disks_data
+
+    def _check_disk_health_detailed(self):
+        """
+        Verifica TODOS os discos físicos montados.
+        Retorna uma lista de strings de alerta baseada em GBs livres.
+        """
+        alerts = []
+        try:
+            # Pega todas as partições (C:, D:, etc)
+            partitions = psutil.disk_partitions(all=False)
+            for p in partitions:
+                # Ignora CD-ROM ou drives vazios/protegidos
+                if 'cdrom' in p.opts or p.fstype == '':
+                    continue
+                    
+                try:
+                    usage = psutil.disk_usage(p.mountpoint)
+                    free_gb = usage.free / (1024**3)
+                    
+                    if free_gb < self.thresholds['disk_min_gb_critical']:
+                        alerts.append(f"Disco {p.mountpoint} CRÍTICO ({free_gb:.1f} GB livres)")
+                    elif free_gb < self.thresholds['disk_min_gb_warning']:
+                        alerts.append(f"Disco {p.mountpoint} com pouco espaço ({free_gb:.1f} GB livres)")
+                except PermissionError:
+                    continue # Pula discos que o sistema não deixa ler
+        except Exception as e:
+            log.error(f"Erro ao verificar discos: {e}")
+            
+        return alerts
 
     # --- MÉTODOS EXIGIDOS PELO BRAIN.PY (Restaurados) ---
     def get_cpu_usage(self):
@@ -305,7 +357,12 @@ class SystemInfo:
                 is_cpu_high = cpu > self.thresholds['cpu_max']
                 is_ram_high = ram['percent'] > self.thresholds['ram_max']
                 is_gpu_hot = gpu['temp'] > self.thresholds['gpu_temp_max']
-                is_disk_full = disk['free_percent'] < self.thresholds['disk_space_min']
+                is_disk_full = False
+                if isinstance(disk, list):
+                    for d in disk:
+                        if d['free_percent'] < self.thresholds['disk_space_min']:
+                            is_disk_full = True
+                            break
                 
                 # Bateria crítica: só se não estiver carregando e abaixo do mínimo
                 is_battery_crit = (not bat['plugged'] and bat['percent'] <= self.thresholds['battery_min'])
@@ -361,10 +418,17 @@ class SystemInfo:
                             self.last_alert_time['gpu'] = now
 
                     # Disk Check
-                    if is_disk_full:
-                        if (now - self.last_alert_time['disk'] > self.REMINDER_COOLDOWN):
-                            warnings.append(f"Disco cheio ({disk['free_percent']:.1f}% livre)")
+                    # --- [ATUALIZADO] Disk Check (Multi-Drive em GB) ---
+                    # Verifica a cada loop, mas respeita o Cooldown para avisar
+                    if (now - self.last_alert_time['disk'] > self.REMINDER_COOLDOWN):
+                        disk_alerts = self._check_disk_health_detailed()
+                        if disk_alerts:
+                            # Adiciona os alertas encontrados à lista geral de warnings
+                            warnings.extend(disk_alerts)
                             self.last_alert_time['disk'] = now
+                            # Força o estado crítico visual se tiver disco vermelho
+                            if any("CRÍTICO" in a for a in disk_alerts):
+                                current_danger = True
 
                     # Battery Check
                     if is_battery_crit:

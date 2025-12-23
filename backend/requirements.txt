@@ -1,3 +1,8 @@
+# Para rodar o J.A.R.V.I.S localmente com voz em terminal utilize:
+# cd backend
+# pip install -r requirements.txt
+# python -m services.brain (Sem interface gráfica) --> Para testes
+
 ollama
 python-dotenv
 SpeechRecognition
@@ -6,8 +11,5 @@ edge-tts
 pygame
 pyttsx3
 pywebview
-
-# Para rodar o J.A.R.V.I.S localmente com voz em terminal utilize:
-# cd backend
-# pip install -r requirements.txt
-# python -m services.brain
+comtypes
+pycaw

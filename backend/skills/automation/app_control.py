@@ -3,69 +3,104 @@ import difflib
 import subprocess
 import json
 import psutil
+import requests  # Conexão direta
 from core import log
-
+from core.config import settings
 
 # --- CONFIGURAÇÃO DA SKILL ---
 INTENT = "APP_CONTROL"
-PROMPT_TEXT = """- APP_CONTROL: O usuário quer abrir, fechar ou focar (trazer para frente) um programa específico. 
-  Entity = nome do software (ex: 'chrome', 'spotify', 'camera', 'notepad', 'calc' e etc).
-  Verbos: abrir, iniciar, fechar, encerrar, focar, mostrar, mudar para, trazer."""
+PROMPT_TEXT = """- APP_CONTROL: Abrir, fechar ou focar programas.
+  Use quando: Usuário citar nomes de software (Chrome, Spotify, Code, etc)."""
+
+# --- CÉREBRO ESPECÍFICO DA SKILL (APP EXPERT) ---
+APP_DECISION_PROMPT = """
+Você é o Gerenciador de Processos do J.A.R.V.I.S.
+Analise o comando e extraia a AÇÃO e o ALVO (App).
+
+SAÍDA: JSON estrito.
+{
+  "action": "open" | "close" | "focus",
+  "target": "nome do app extraído do texto"
+}
+
+Regras:
+1. "open": Iniciar, abrir, rodar, executar.
+2. "close": Fechar, encerrar, matar, parar, finalizar.
+3. "focus": Mostrar, trazer pra frente, focar, mudar para, "cadê o...".
+4. "target": O nome do programa citado. Se disser "o navegador", deduza o nome se possível ou mantenha "navegador".
+
+Exemplos:
+"Abre o Chrome pra mim" -> {"action": "open", "target": "chrome"}
+"Mata o Spotify agora" -> {"action": "close", "target": "spotify"}
+"Mostra a calculadora" -> {"action": "focus", "target": "calculadora"}
+"""
 
 # --- CACHE GLOBAL ---
-# Armazena os apps encontrados para não varrer o disco toda vez (Melhora performance)
 INSTALLED_APPS_CACHE = {}
 
-# --- ALIASES MANUAIS (Apelidos que a busca automática não resolveria) ---
+# --- ALIASES MANUAIS ---
 ALIASES = {
     "zap": "whatsapp",
-    "navegador": "opera",
+    "navegador": "opera",  # Ou chrome, conforme preferência
+    "browser": "opera",
     "vs": "visual studio code",
+    "code": "visual studio code",
     "lol": "league of legends",
     "calculadora": "calculator",
     "calc": "calculator"
 }
 
-# --- MAPEAMENTO DE PROCESSOS (Nomes reais dos executáveis no Windows) ---
+# --- MAPEAMENTO DE PROCESSOS ---
 PROCESS_MAP = {
     "calculadora": ["CalculatorApp", "Calculator"],
     "spotify": ["Spotify"],
     "chrome": ["chrome"],
     "opera": ["opera"],
-    "calcula": ["CalculatorApp", "Calculator"],
-    "calculator": ["CalculatorApp", "Calculator"]
+    "firefox": ["firefox"],
+    "calculator": ["CalculatorApp", "Calculator"],
+    "code": ["Code"],
+    "visual studio code": ["Code"]
 }
 
+# --- FUNÇÃO LOCAL DE LLM ---
+def _ask_ollama_app_expert(user_text):
+    """Consulta o LLM para decidir o que fazer com o app."""
+    url = f"http://{settings.OLLAMA_HOST}/api/generate"
+    payload = {
+        "model": settings.OLLAMA_MODEL,
+        "prompt": user_text,
+        "system": APP_DECISION_PROMPT,
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0.1} # Precisão máxima
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=5)
+        response.raise_for_status()
+        return response.json().get("response", "{}")
+    except Exception as e:
+        log.error(f"❌ [APP SKILL] Erro no cérebro: {e}")
+        return None
+
+# --- HELPERS DE SISTEMA (MANTIDOS IGUAIS PELA EFICIÊNCIA) ---
 def get_installed_apps():
-    """
-    Varre o Menu Iniciar e usa PowerShell para descobrir o que está instalado.
-    Retorna um dict: {'nome do app': 'caminho_ou_id'}
-    """
     global INSTALLED_APPS_CACHE
-    if INSTALLED_APPS_CACHE:
-        return INSTALLED_APPS_CACHE
-
-    log.info("📂 [SKILL] Indexando softwares instalados (Classic + UWP)...")
-    
+    if INSTALLED_APPS_CACHE: return INSTALLED_APPS_CACHE
+    log.info("📂 [SKILL] Indexando softwares...")
     apps = {}
-
-    # 1. Busca via PowerShell (Pega Apps da Loja e Atalhos Modernos)
+    
+    # 1. PowerShell (Modern Apps)
     try:
         cmd = 'powershell -Command "Get-StartApps | Select-Object Name, AppID | ConvertTo-Json -Compress"'
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         if result.returncode == 0 and result.stdout.strip():
-            raw_data = json.loads(result.stdout)
-            # Se vier só um app, o JSON não é lista. Forçamos a ser.
-            data = raw_data if isinstance(raw_data, list) else [raw_data]
+            raw = json.loads(result.stdout)
+            data = raw if isinstance(raw, list) else [raw]
             for item in data:
-                name = item.get('Name', '').lower().strip()
-                appid = item.get('AppID', '')
-                if name and appid:
-                    apps[name] = appid
-    except Exception as e:
-        log.error(f"Erro ao indexar via PowerShell: {e}")
+                apps[item.get('Name', '').lower().strip()] = item.get('AppID')
+    except: pass
 
-    # 2. Busca Clássica via Sistema de Arquivos (Redundância para LNKs órfãos)
+    # 2. Filesystem (LNKs)
     paths = [
         os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs"),
         os.path.expandvars(r"%ProgramData%\Microsoft\Windows\Start Menu\Programs")
@@ -75,55 +110,40 @@ def get_installed_apps():
         for root, _, files in os.walk(path):
             for file in files:
                 if file.lower().endswith(".lnk"):
-                    clean_name = file[:-4].lower().strip()
-                    if clean_name not in apps: # Prioridade para o AppID do PowerShell
-                        apps[clean_name] = os.path.join(root, file)
+                    apps[file[:-4].lower().strip()] = os.path.join(root, file)
     
     INSTALLED_APPS_CACHE = apps
-    log.info(f"✅ [SKILL] Indexação concluída. {len(apps)} apps encontrados.")
     return apps
 
 def find_best_match(user_query, apps_dict):
-    """
-    Usa algoritmo de similaridade para encontrar o app mais próximo do que foi falado.
-    """
-    # 1. Verifica match exato nos Aliases manuais
-    if user_query in ALIASES:
-        target_alias = ALIASES[user_query]
-        # Tenta achar o alias dentro dos apps instalados
-        matches = difflib.get_close_matches(target_alias, apps_dict.keys(), n=1, cutoff=0.6)
-        if matches:
-            return matches[0], apps_dict[matches[0]]
-
-    # 2. Busca Difusa (Fuzzy) na lista de apps reais
-    # n=1: queremos apenas o melhor candidato
-    # cutoff=0.5: precisa ter pelo menos 50% de semelhança
-    matches = difflib.get_close_matches(user_query, apps_dict.keys(), n=1, cutoff=0.5)
+    clean_query = user_query.lower().strip()
+    # Alias Check
+    if clean_query in ALIASES:
+        clean_query = ALIASES[clean_query]
     
+    # Fuzzy Match
+    matches = difflib.get_close_matches(clean_query, apps_dict.keys(), n=1, cutoff=0.5)
     if matches:
-        best_name = matches[0]
-        return best_name, apps_dict[best_name]
-    
+        return matches[0], apps_dict[matches[0]]
     return None, None
 
 def find_active_processes(target_name):
-    """Retorna lista de processos (psutil.Process) que correspondem ao nome/alias."""
+    target_clean = target_name.lower()
+    if target_clean in ALIASES: target_clean = ALIASES[target_clean]
+
     found_procs = []
-    targets_to_check = PROCESS_MAP.get(target_name, [target_name])
+    # Busca na lista manual ou usa o próprio nome
+    targets_to_check = PROCESS_MAP.get(target_clean, [target_clean])
     
     for proc in psutil.process_iter(['pid', 'name']):
         try:
-            proc_name = proc.info['name'].lower()
-            for t in targets_to_check:
-                if t.lower() in proc_name:
-                    found_procs.append(proc)
-                    break 
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
+            p_name = proc.info['name'].lower()
+            if any(t.lower() in p_name for t in targets_to_check):
+                found_procs.append(proc)
+        except: continue
     return found_procs
 
 def focus_window(pid):
-    """Usa PowerShell para trazer a janela do PID para frente."""
     cmd = f"""
     $p = Get-Process -Id {pid} -ErrorAction SilentlyContinue
     if ($p -and $p.MainWindowTitle) {{
@@ -131,87 +151,96 @@ def focus_window(pid):
         $w.AppActivate($p.MainWindowTitle)
         return "OK"
     }}
-    return "NO_WINDOW"
+    return "NO"
     """
     try:
-        # Executa o PS e captura "OK"
         res = subprocess.run(["powershell", "-Command", cmd], capture_output=True, text=True).stdout.strip()
         return "OK" in res
-    except:
-        return False
+    except: return False
 
+# --- EXECUÇÃO PRINCIPAL ---
 def execute(entity, command_text=""):
-    if not entity:
-        return "Não entendi qual programa você quer gerenciar."
+    if not command_text:
+        return "Aguardando designação do software, senhor."
 
-    target = entity.lower().strip()
-    full_cmd = command_text.lower()
-    
-    # Detecção de Intenções Específicas
-    is_closing = any(w in full_cmd for w in ["fechar", "encerre", "finalizar", "mate", "pare"])
-    is_focusing = any(w in full_cmd for w in ["focar", "foco", "mostre", "mostrar", "mude", "veja", "traz"])
+    # Cérebro: Define Ação e Alvo
+    ai_response = _ask_ollama_app_expert(command_text)
+    if not ai_response:
+        return "Falha na conexão com os processadores neurais. Não posso gerenciar apps agora."
 
-    # --- 1. LÓGICA DE FOCO (Contextual Window Focus) ---
-    if is_focusing:
-        log.info(f"� [SKILL] Tentando focar no app: {target}")
-        procs = find_active_processes(target)
-        
-        if not procs:
-            return f"O {target} não parece estar aberto no momento. Quer que eu o abra?"
-        
-        # Tenta focar no primeiro processo que tiver janela
-        for proc in procs:
-            if focus_window(proc.info['pid']):
-                return f"Trazendo o {target} para sua tela."
-        
-        return f"O {target} está rodando, mas não encontrei uma janela visível para focar."
-
-    # --- 2. LÓGICA DE FECHAMENTO ---
-    if is_closing:
-        log.info(f"🛑 [SKILL] Tentando encerrar processo relacionado a: {target}")
-        procs = find_active_processes(target)
-        
-        if procs:
-            count = 0
-            for proc in procs:
-                try:
-                    proc.terminate()
-                    count += 1
-                except: pass
-            return f"{count} processos do {target} foram encerrados."
-        else:
-            return f"Não encontrei o processo {target} em execução para encerrar."
-
-    # --- 3. LÓGICA DE ABERTURA ---
-    # Verifica se já está aberto antes de abrir de novo (Opcional, mas smart)
-    # Se o usuário só disse "abrir spotify" e ele já ta aberto, focar é mais inteligente
-    existing_procs = find_active_processes(target)
-    if existing_procs:
-        # Tenta focar primeiro
-        for proc in existing_procs:
-            if focus_window(proc.info['pid']):
-                return f"O {target} já está aberto. Trouxe ele para frente."
-
-    # Se não tá aberto ou não conseguiu focar, abre do zero
-    apps = get_installed_apps()
-    app_name, app_path = find_best_match(target, apps)
-    
-    if app_path:
-        try:
-            log.info(f"🚀 [SKILL] Abrindo: {app_name} (Target: {app_path})")
-            if "!" in app_path or app_path.startswith("{"):
-                subprocess.Popen(f'explorer.exe shell:AppsFolder\\{app_path}', shell=True)
-            else:
-                os.startfile(app_path)
-            return f"Iniciando {app_name}."
-        except Exception as e:
-            log.error(f"Erro ao abrir {app_name}: {e}")
-            return f"Erro ao iniciar {app_name}."
-    
-    # Fallback
     try:
-        log.warning(f"⚠️ App '{target}' não encontrado. Tentando 'Run'...")
-        subprocess.Popen(target, shell=True)
-        return f"Executando comando: {target}"
-    except:
-        return f"Não encontrei o software '{target}'."
+        decision = json.loads(ai_response)
+        action = decision.get("action")
+        target_raw = decision.get("target")
+
+        log.info(f"🤖 Decisão: {action} | Alvo: {target_raw}")
+        
+        if not target_raw:
+            return "Comando incompleto. O alvo do software não foi identificado."
+
+        # Execução Baseada na Decisão
+        # --- AÇÃO: FOCAR ---
+        if action == "focus":
+            procs = find_active_processes(target_raw)
+            if not procs:
+                return f"Varredura completa. O {target_raw} não consta nos processos ativos."
+            
+            for proc in procs:
+                if focus_window(proc.info['pid']):
+                    return f"Redirecionando interface do {target_raw} para a tela principal."
+            
+            return f"O {target_raw} está operando em segundo plano, mas a interface gráfica não responde."
+
+        # --- AÇÃO: FECHAR ---
+        elif action == "close":
+            procs = find_active_processes(target_raw)
+            if procs:
+                count = 0
+                for proc in procs:
+                    try: 
+                        proc.terminate()
+                        count += 1
+                    except: pass
+                # Resposta técnica e satisfatória
+                return f"Encerrando {count} instâncias do {target_raw}. Memória liberada."
+            else:
+                return f"Não há processos ativos do {target_raw} para terminar."
+
+        # --- AÇÃO: ABRIR (OPEN) ---
+        elif action == "open":
+            # Primeiro verifica se já existe
+            existing = find_active_processes(target_raw)
+            if existing:
+                # Tenta focar em vez de abrir duplicado
+                if focus_window(existing[0].info['pid']):
+                    return f"O {target_raw} já está ativo. Trazendo para o primeiro plano para evitar redundância."
+            
+            # Se não, abre
+            apps = get_installed_apps()
+            real_name, app_path = find_best_match(target_raw, apps)
+            
+            if app_path:
+                try:
+                    log.info(f"🚀 Iniciando: {real_name}")
+                    if "!" in app_path or app_path.startswith("{"):
+                        subprocess.Popen(f'explorer.exe shell:AppsFolder\\{app_path}', shell=True)
+                    else:
+                        os.startfile(app_path)
+                    return f"Inicializando sequência de abertura do {real_name}."
+                except:
+                    return f"Erro ao tentar executar o binário do {real_name}."
+            
+            # Tentativa desesperada (Comando direto)
+            try:
+                subprocess.Popen(target_raw, shell=True)
+                return f"Protocolo padrão falhou. Tentando execução direta via shell para {target_raw}."
+            except:
+                return f"Busca negativa. O software {target_raw} não foi localizado no índice do sistema."
+
+    except json.JSONDecodeError:
+        return "Erro de sintaxe na resposta da IA. Requer diagnóstico."
+    except Exception as e:
+        log.error(f"Erro App Control: {e}")
+        return "Detectada falha crítica no subsistema de gerenciamento de processos."
+
+    return "Comando de software fora dos parâmetros conhecidos."
