@@ -167,6 +167,16 @@ def scan_system_hardware():
 def process_system_alert(message, is_proactive=False):
     if is_proactive:
         try:
+            # --- Intercepta Alertas de Disco ---
+            # Evita que o sistema tente achar "processos" num alerta de HD
+            if "Disco" in message and ("CRÍTICO" in message or "pouco espaço" in message):
+                # Limpa asteriscos se houver e fala direto
+                clean_msg = message.replace("*", "")
+                ear_pause()
+                speak(f"Alerta de Armazenamento: {clean_msg}")
+                ear_resume()
+                return
+
             # 1. Identifica o culpado
             culprit_match = re.search(r"(?:Top 5|Maiores consumos): (.*?)\s*\(", message)
             culprit_app = culprit_match.group(1).strip() if culprit_match else None
@@ -208,7 +218,7 @@ def process_system_alert(message, is_proactive=False):
                 return # Retorna para evitar o alerta genérico abaixo
 
             # 2. Gera o Alerta Genérico (Sem culpado claro ou erro de parsing)
-            sys_prompt = "Você é a interface de alerta. Resuma o problema técnico em 1 frase curta."
+            sys_prompt = "Você é a interface de alerta. Resuma o problema técnico e forneça uma solução proativa."
             alert_text = query_ollama([
                 {'role': 'system', 'content': sys_prompt},
                 {'role': 'user', 'content': message}
@@ -233,10 +243,8 @@ chat_history = []
 # Contexto para ações proativas que aguardam autorização do usuário (Ex: Fechar app pesado)
 pending_critical_action = None 
 
-def analyze_semantic_state(cpu, ram, gpu, batt, disk, net):
-    """
-    Gera uma narrativa de estado (Mood do JARVIS) baseada em TODOS os sensores.
-    """
+def analyze_semantic_state(cpu, ram, gpu, batt, disks, net):
+    """Gera uma narrativa de estado (Mood do JARVIS) baseada em TODOS os sensores."""
     states = []
     
     # --- PROCESSAMENTO (O Cérebro) ---
@@ -254,39 +262,35 @@ def analyze_semantic_state(cpu, ram, gpu, batt, disk, net):
         states.append("STATUS RAM: DISPONIBILIDADE PLENA (Memória livre para grandes compilações.)")
 
     # --- DISCO (Armazenamento) ---
-    if disk['percent'] > 95:
-         states.append("STATUS DISCO: CRÍTICO (Espaço em disco esgotado. Falhas de I/O iminentes.)")
-    elif disk['percent'] > 85:
-         states.append("STATUS DISCO: ALERTA (Pouco espaço livre. Limpeza recomendada.)")
+    if isinstance(disks, list):
+        for d in disks:
+            free_gb = d.get('free_gb', 100) 
+            mount = d.get('mount', '?')
+            
+            if free_gb < 10:
+                states.append(f"STATUS DISCO ({mount}): CRÍTICO (Apenas {free_gb}GB livres. Falha iminente.)")
+            elif free_gb < 20:
+                states.append(f"STATUS DISCO ({mount}): ALERTA (Espaço baixo: {free_gb}GB.)")
 
     # --- VÍDEO (A Visão) ---
-    # Assume-se que 'gpu' venha com chaves 'load' e 'temp'
     if gpu.get('temp', 0) > 80:
         states.append(f"STATUS GPU: SUPERAQUECIMENTO ({gpu['temp']}°C). Ventoinhas operando no limite audível.")
     elif gpu.get('load', 0) > 80:
         states.append("STATUS GPU: RENDERIZAÇÃO INTENSA (Processamento gráfico prioritário.)")
 
     # --- REDE (A Conectividade) ---
-    # Analisa se está baixando algo pesado.
-    # O try/except garante que se o psutil mandar "10 MB/s" (com espaço) ou "GB/s", o código não quebre.
     down_speed = net.get('download_speed', '0B/s')
     try:
-        # Verifica apenas se é MB ou GB (KB é irrelevante para "Influxo Massivo")
         if "MB/s" in down_speed:
-            # .replace tira a unidade | .strip tira espaços sobrando (" 15.5 " -> "15.5")
             val = float(down_speed.replace("MB/s", "").strip())
-            
-            if val > 15.0: # Limite de 15 MB/s para considerar "Massivo"
+            if val > 15.0:
                 states.append(f"STATUS REDE: INFLUXO MASSIVO DE DADOS ({down_speed}). Banda larga saturada.")
-                
         elif "GB/s" in down_speed:
              states.append(f"STATUS REDE: VELOCIDADE DE FIBRA ÓPTICA EXTREMA ({down_speed}).")
-             
     except ValueError:
         pass
         
     # Monitor de Instabilidade (Pacotes perdidos ou Erros)
-    # Assumindo que 'net' tenha chaves 'errin', 'errout', 'dropin', 'dropout' (SystemInfo deve prover isso)
     net_errors = net.get('errin', 0) + net.get('errout', 0)
     net_drops = net.get('dropin', 0) + net.get('dropout', 0)
     
@@ -302,10 +306,6 @@ def analyze_semantic_state(cpu, ram, gpu, batt, disk, net):
     else:
         if batt['percent'] == 100:
             states.append("STATUS ENERGIA: POTÊNCIA MÁXIMA (Reator Arc em 100%.)")
-
-    # --- ARMAZENAMENTO ---
-    if disk['free_percent'] < 10:
-        states.append("STATUS DISCO: CLAUSTROFÓBICO (Espaço de armazenamento crítico. Sugiro limpeza.)")
 
     # Se estiver tudo normal
     if not states:
@@ -323,18 +323,24 @@ def get_realtime_context():
         ram = sys_monitor.get_ram_usage()
         gpu = sys_monitor.get_gpu_info()
         batt = sys_monitor.get_battery_status()
-        disk = sys_monitor.get_disk_space()
+        disks = sys_monitor.get_disk_space()
         net = sys_monitor.get_network_speed()
-        
-        # [NOVO] Coleta a lista REAL de processos para o chat não alucinar
-        # Limitamos a 3 para não poluir demais o prompt
         top_cpu_apps = sys_monitor.get_top_processes('cpu', limit=3)
         top_apps_str = ", ".join(top_cpu_apps) if top_cpu_apps else "Nenhum destaque"
 
-        # 2. Gera a interpretação rica
-        semantic_status = analyze_semantic_state(cpu, ram, gpu, batt, disk, net)
+        # Gera a interpretação rica
+        semantic_status = analyze_semantic_state(cpu, ram, gpu, batt, disks, net)
         
-        # 3. Monta o contexto para o LLM
+        if isinstance(disks, list):
+            disk_parts = []
+            for d in disks:
+                info = f"{d['mount']} {d['free_gb']}GB Livre ({d['free_percent']:.0f}%)"
+                disk_parts.append(info)
+            disk_str = " | ".join(disk_parts)
+        else:
+            disk_str = "Leitura de disco indisponível"
+
+        # Monta o contexto para o LLM
         context_str = (
             f"[DIAGNÓSTICO DE SISTEMA J.A.R.V.I.S.]\n"
             f"{semantic_status}\n"
@@ -343,7 +349,7 @@ def get_realtime_context():
             f"- RAM: {ram['percent']}% ({ram['used_gb']}GB usados)\n"
             f"- GPU: {gpu['name']} ({gpu.get('temp', 0)}°C)\n"
             f"- Rede: ↓{net['download_speed']} | ↑{net['upload_speed']}\n"
-            f"- Disco: {disk['free_percent']:.1f}% Livre\n"
+            f"- Disco: {disk_str}\n"
             f"- Energia: {batt['percent']}% ({'AC' if batt['plugged'] else 'Bateria'})\n"
         )
         return context_str
@@ -554,7 +560,7 @@ def extract_fact_to_memory(text):
 
 def start_brain():
     """Loop Principal"""
-    log.info(f"\nConectado à Interface Neural {settings.OLLAMA_MODEL} em {settings.OLLAMA_HOST}")
+    log.info(f"Conectado à Interface Neural {settings.OLLAMA_MODEL} em {settings.OLLAMA_HOST}")
     
     # Frase inicial clássica
     speak("Importando preferências virtuais... pronto. À sua disposição, senhor.")
@@ -568,7 +574,7 @@ def start_brain():
             command = listen()
 
             if command:
-                log.info(f"[🧠 BRAIN]: Intenção: '{command}'")
+                log.info(f"🧠 [BRAIN]: Intenção: '{command}'")
                 
                 response_text = execute_command(command)
 

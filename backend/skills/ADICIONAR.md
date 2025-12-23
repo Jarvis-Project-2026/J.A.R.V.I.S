@@ -16,7 +16,7 @@ Use os checkboxes para marcar o que já foi implementado e visualizar claramente
 
 ### B. Controle Periférico e Global
 
-* [ ] **Manipulação de Áudio** — Controle de volume, mute e mídia global
+* ✅ **Manipulação de Áudio** — Controle de volume, mute e mídia global (*audio_control.py*)
 * [ ] **Ajuste de Exibição** — Controle de brilho e PrintScreen (tela inteira ou janela ativa)
 * [ ] **Segurança Física** — Bloquear estação (Win + L) ou suspender o sistema
 
@@ -29,7 +29,7 @@ Use os checkboxes para marcar o que já foi implementado e visualizar claramente
 ### D. Consciência de Ambiente e Rede (The Sentry)
 
 * ✅ **Monitor de Conectividade** — Análise de qualidade de internet e alertas de instabilidade (*brain.py*)
-* [ ] **Gestão de Armazenamento** — Monitoramento proativo de HD/SSD (*brain.py*)
+* ✅ **Gestão de Armazenamento** — Monitoramento proativo de HD/SSD (*brain.py*)
 
 ### E. Interação de Interface Inteligente (The HUD Sync)
 
