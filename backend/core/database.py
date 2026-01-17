@@ -149,6 +149,20 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    def get_all_memory_keys(self) -> list:
+        """Retorna todas as chaves cadastradas na tabela memory."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('SELECT key FROM memory')
+            rows = cursor.fetchall()
+            return [row[0] for row in rows]
+        except sqlite3.Error as e:
+            log.error(f"Erro ao listar chaves de memória: {e}")
+            return []
+        finally:
+            conn.close()
+
     # --- MÉTODOS DE HISTÓRICO ---
     def log_interaction(self, role: str, content: str):
         conn = self._get_connection()
@@ -177,7 +191,7 @@ class DatabaseManager:
             cursor.execute(f"SELECT role, content FROM history WHERE ({search_query}) ORDER BY timestamp DESC LIMIT ?", params)
             return cursor.fetchall()
         except Exception as e:
-            log.error(f"Erro na busca de memória: {e}")
+            log.error(f"Erro na busca de histórico: {e}")
             return []
         finally:
             conn.close()

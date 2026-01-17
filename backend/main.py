@@ -5,7 +5,7 @@ import os
 import threading
 
 # Importa as configurações, o Logger e agora a Memória (Database)
-from core import settings, log, db, JarvisAPI
+from core import settings, log, db, JarvisAPI, manager
 
 
 # --- IMPORTAÇÃO DOS MÓDULOS ---
@@ -64,10 +64,13 @@ def jarvis_auto_loop():
     sys_monitor.brain_callback = ui_aware_alert_callback
     sys_monitor.start_proactive_monitor(interval=3)  # Verificações a cada 3 segundos
 
-    # Exemplo de uso da memória: Recuperar nome do usuário se existir
-    user_name = db.get_memory("user_name") or "Senhor"
-    msg_boas_vindas = f"Sistemas sincronizados. Bem-vindo de volta, {user_name}."
-    
+    # --- PROTOCOLO DE BOOT (Saudação Dinâmica) ---
+    if "SYSTEM_REPORT" in manager.skills:
+        msg_boas_vindas = manager.skills["SYSTEM_REPORT"].execute(None, "boot_protocol_auto")
+    else:
+        user_name = db.get_memory("nome") or "Senhor"
+        msg_boas_vindas = f"Sistemas sincronizados. Bem-vindo de volta, {user_name}."
+
     update_ui("SPEAKING", msg_boas_vindas)
     speak(msg_boas_vindas)
     

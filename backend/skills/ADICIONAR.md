@@ -1,7 +1,6 @@
 # 🧠 J.A.R.V.I.S — Roadmap de Skills
 
 Este documento serve como **lista de tarefas (checklist)** para acompanhar a evolução das *skills* do projeto **J.A.R.V.I.S**.
-
 Use os checkboxes para marcar o que já foi implementado e visualizar claramente o que ainda falta desenvolver.
 
 ---
@@ -12,18 +11,19 @@ Use os checkboxes para marcar o que já foi implementado e visualizar claramente
 
 * ✅ **Lançador de Apps** — Abrir qualquer software instalado por nome (VS Code, Navegador, Spotify, Calculadora) (*app_control.py*)
 * ✅ **Encerramento de Tarefas** — Fechar janelas específicas ou finalizar processos travados (*app_control.py*)
-* [ ] **Protocolo de Limpeza** — Esvaziar lixeira, limpar arquivos temporários e apagar apps por comando de voz
+* ✅ **Protocolo de Limpeza** — Esvaziar lixeira, limpar arquivos temporários e apagar apps por comando de voz (*system_clear.py*)
 
 ### B. Controle Periférico e Global
 
 * ✅ **Manipulação de Áudio** — Controle de volume, mute e mídia global (*audio_control.py*)
-* [ ] **Ajuste de Exibição** — Controle de brilho e PrintScreen (tela inteira ou janela ativa)
-* [ ] **Segurança Física** — Bloquear estação (Win + L) ou suspender o sistema
+* ✅ **Ajuste de Exibição** — Controle de brilho e PrintScreen (tela inteira ou janela ativa) (*screen_control.py*)
+* ✅ **Segurança Física** — Bloquear estação (Win + L) ou suspender o sistema (*system_security.py*)
+* ✅ **Protocolo de Desligamento** — Iniciar desligamento total do núcleo de força (*system_security.py*)
 
 ### C. Automação de Interface (O Toque J.A.R.V.I.S.)
 
-* [ ] **Cenas de Trabalho (Macros)** — Ex: "Modo Code" abre editor, terminal e docs
-* [ ] **Injeção de Atalhos** — Executar atalhos de teclado via voz
+* ✅ **Cenas de Trabalho (Macros)** — Ex: "Modo Code" abre editor, terminal e docs (*work_macros.py*)
+* ✅ **Injeção de Atalhos** — Executar atalhos de teclado via voz (*keyboard_control.py*)
 * ✅ **Diagnóstico Proativo** — Alertas automáticos de temperatura e bateria, com ações corretivas (*brain.py*)
 
 ### D. Consciência de Ambiente e Rede (The Sentry)
@@ -38,8 +38,8 @@ Use os checkboxes para marcar o que já foi implementado e visualizar claramente
 
 ### F. Protocolos de Resposta Proativa (The Butler)
 
-* [ ] **Sugestão de Recursos** — Recomenda encerramento de processos ao detectar RAM alta (*brain.py*)
-* [ ] **Saudação de Status (Boot Protocol)** — Relatório inicial com status do sistema
+* ✅ **Sugestão de Recursos** — Recomenda encerramento de processos ao detectar RAM alta (*brain.py*)
+* ✅ **Saudação de Status (Boot Protocol)** — Relatório inicial com status do sistema (*status_report.py*)
 
 ---
 
