@@ -10,7 +10,7 @@ from core.config import settings
 # --- CONFIGURAÇÃO DA SKILL ---
 INTENT = "APP_CONTROL"
 PROMPT_TEXT = """- APP_CONTROL: Abrir, fechar ou focar programas.
-  Use quando: Usuário citar nomes de software (Chrome, Spotify, Code, etc)."""
+  Use quando: Usuário citar nomes de software (Chrome, Spotify, Code, etc) com a ação de abrir, fechar ou focar."""
 
 # --- CÉREBRO ESPECÍFICO DA SKILL (APP EXPERT) ---
 APP_DECISION_PROMPT = """
@@ -41,13 +41,14 @@ INSTALLED_APPS_CACHE = {}
 # --- ALIASES MANUAIS ---
 ALIASES = {
     "zap": "whatsapp",
-    "navegador": "opera",  # Ou chrome, conforme preferência
-    "browser": "opera",
+    "navegador": "opera gx",  # Ou chrome, conforme preferência
     "vs": "visual studio code",
     "code": "visual studio code",
     "lol": "league of legends",
     "calculadora": "calculator",
-    "calc": "calculator"
+    "calc": "calculator",
+    "opera": "opera gx",
+    "browser": "opera gx"
 }
 
 # --- MAPEAMENTO DE PROCESSOS ---
@@ -75,11 +76,11 @@ def _ask_ollama_app_expert(user_text):
         "options": {"temperature": 0.1} # Precisão máxima
     }
     try:
-        response = requests.post(url, json=payload, timeout=5)
+        response = requests.post(url, json=payload, timeout=10)
         response.raise_for_status()
         return response.json().get("response", "{}")
     except Exception as e:
-        log.error(f"❌ [APP SKILL] Erro no cérebro: {e}")
+        log.error(f"❌ [APP SKILL] Erro no cérebro (Timeout/Conexão): {e}")
         return None
 
 # --- HELPERS DE SISTEMA (MANTIDOS IGUAIS PELA EFICIÊNCIA) ---
@@ -121,8 +122,8 @@ def find_best_match(user_query, apps_dict):
     if clean_query in ALIASES:
         clean_query = ALIASES[clean_query]
     
-    # Fuzzy Match
-    matches = difflib.get_close_matches(clean_query, apps_dict.keys(), n=1, cutoff=0.5)
+    # Fuzzy Match - Aumentado para 0.6 para evitar abrir apps errados (como 'peak' em vez de 'opera')
+    matches = difflib.get_close_matches(clean_query, apps_dict.keys(), n=1, cutoff=0.6)
     if matches:
         return matches[0], apps_dict[matches[0]]
     return None, None
@@ -222,8 +223,9 @@ def execute(entity, command_text=""):
             if app_path:
                 try:
                     log.info(f"🚀 Iniciando: {real_name}")
+                    # Usamos subprocess.DEVNULL para silenciar logs internos dos apps (Notion, Spotify, etc)
                     if "!" in app_path or app_path.startswith("{"):
-                        subprocess.Popen(f'explorer.exe shell:AppsFolder\\{app_path}', shell=True)
+                        subprocess.Popen(f'explorer.exe shell:AppsFolder\\{app_path}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     else:
                         os.startfile(app_path)
                     return f"Inicializando sequência de abertura do {real_name}."
@@ -232,7 +234,7 @@ def execute(entity, command_text=""):
             
             # Tentativa desesperada (Comando direto)
             try:
-                subprocess.Popen(target_raw, shell=True)
+                subprocess.Popen(target_raw, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return f"Protocolo padrão falhou. Tentando execução direta via shell para {target_raw}."
             except:
                 return f"Busca negativa. O software {target_raw} não foi localizado no índice do sistema."

@@ -5,6 +5,7 @@ import threading
 from datetime import datetime, timedelta
 from .config import settings
 from .logger import log
+from .database import db
 
 # --- BLINDAGEM DE GPU ---
 try:
@@ -246,6 +247,24 @@ class SystemInfo:
         except:
              return {"read_speed": "0B/s", "write_speed": "0B/s"}
 
+    def get_ping(self, host="8.8.8.8"):
+        """Verifica latência via Ping ICMP (Windows) para o Google DNS."""
+        import subprocess
+        import re
+        try:
+            # -n 1: 1 pacote, -w 1000: timeout 1000ms
+            cmd = f"ping -n 1 -w 1000 {host}"
+            res = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+            
+            if res.returncode == 0:
+                # Busca 'tempo=Xms' ou 'time=Xms' ou 'time<1ms'
+                match = re.search(r"(?:tempo|time)[=<]([\d]+)ms", res.stdout, re.IGNORECASE)
+                if match:
+                    return int(match.group(1))
+        except Exception as e:
+            log.error(f"Erro no Ping: {e}")
+        return None
+
     def get_system_general(self):
         boot_time_timestamp = psutil.boot_time()
         bt = datetime.fromtimestamp(boot_time_timestamp)
@@ -455,3 +474,129 @@ class SystemInfo:
                 # Não dá break, apenas loga e tenta na próxima iteração (Resiliência)
             
             time.sleep(interval)
+
+    # --- INTEGRAÇÃO SEMÂNTICA (CÉREBRO DO HARDWARE) ---
+    def analyze_semantic_state(self, cpu, ram, gpu, batt, disks, net):
+        """Gera uma narrativa de estado (Mood do JARVIS) baseada em TODOS os sensores."""
+        states = []
+        
+        # --- PROCESSAMENTO (O Cérebro) ---
+        if cpu < 5:
+            states.append("STATUS CPU: OCIOSIDADE PROFUNDA (Potencial de processamento desperdiçado. Tédio detectado.)")
+        elif cpu > 90:
+            states.append("STATUS CPU: CRÍTICO (Processador em regime de esforço máximo. Risco de thermal throttling.)")
+        elif cpu > 60:
+            states.append("STATUS CPU: ALTA DEMANDA (Foco total em tarefas computacionais.)")
+
+        # --- MEMÓRIA (A Consciência) ---
+        if ram['percent'] > 90:
+            states.append("STATUS RAM: SATURAÇÃO IMINENTE (Swap file ativado. O sistema está engasgando.)")
+        elif ram['percent'] < 30:
+            states.append("STATUS RAM: DISPONIBILIDADE PLENA (Memória livre para grandes compilações.)")
+
+        # --- DISCO (Armazenamento) ---
+        if isinstance(disks, list):
+            for d in disks:
+                free_gb = d.get('free_gb', 100) 
+                mount = d.get('mount', '?')
+                
+                if free_gb < 10:
+                    states.append(f"STATUS DISCO ({mount}): CRÍTICO (Apenas {free_gb}GB livres. Falha iminente.)")
+                elif free_gb < 20:
+                    states.append(f"STATUS DISCO ({mount}): ALERTA (Espaço baixo: {free_gb}GB.)")
+
+        # --- VÍDEO (A Visão) ---
+        if gpu.get('temp', 0) > 80:
+            states.append(f"STATUS GPU: SUPERAQUECIMENTO ({gpu['temp']}°C). Ventoinhas operando no limite audível.")
+        elif gpu.get('load', 0) > 80:
+            states.append("STATUS GPU: RENDERIZAÇÃO INTENSA (Processamento gráfico prioritário.)")
+
+        # --- REDE (A Conectividade) ---
+        down_speed = net.get('download_speed', '0B/s')
+        try:
+            if "MB/s" in down_speed:
+                val = float(down_speed.replace("MB/s", "").strip())
+                if val > 15.0:
+                    states.append(f"STATUS REDE: INFLUXO MASSIVO DE DADOS ({down_speed}). Banda larga saturada.")
+            elif "GB/s" in down_speed:
+                 states.append(f"STATUS REDE: VELOCIDADE DE FIBRA ÓPTICA EXTREMA ({down_speed}).")
+        except ValueError:
+            pass
+            
+        # Monitor de Instabilidade (Pacotes perdidos ou Erros)
+        net_errors = net.get('errin', 0) + net.get('errout', 0)
+        net_drops = net.get('dropin', 0) + net.get('dropout', 0)
+        
+        if net_errors > 50 or net_drops > 50:
+             states.append("STATUS REDE: INSTABILIDADE (Detectados pacotes perdidos ou erros na transmissão. Conexão degradada.)")
+
+        # --- ENERGIA (A Vida) ---
+        if not batt['plugged']:
+            if batt['percent'] < 15:
+                states.append("STATUS ENERGIA: EMERGÊNCIA (Reservas esgotadas. Desligamento iminente.)")
+            elif batt['percent'] < 50:
+                states.append("STATUS ENERGIA: MODO ECONOMIA (Operando apenas com suporte vital.)")
+        else:
+            if batt['percent'] == 100:
+                states.append("STATUS ENERGIA: POTÊNCIA MÁXIMA (Reator Arc em 100%.)")
+
+        # Se estiver tudo normal
+        if not states:
+            states.append("STATUS GERAL: NOMINAL (Todos os sistemas operando dentro dos parâmetros ideais de Stark Industries.)")
+
+        return " | ".join(states)
+
+    def get_realtime_context(self):
+        """
+        Coleta TODOS os dados e aplica a camada de personalidade Stark.
+        """
+        try:
+            # 1. Coleta os dados brutos (Usando métodos da própria classe)
+            cpu = self.get_cpu_usage() 
+            ram = self.get_ram_usage()
+            gpu = self.get_gpu_info()
+            batt = self.get_battery_status()
+            disks = self.get_disk_space()
+            net = self.get_network_speed()
+            top_cpu_apps = self.get_top_processes('cpu', limit=3)
+            top_apps_str = ", ".join(top_cpu_apps) if top_cpu_apps else "Nenhum destaque"
+
+            # Gera a interpretação rica
+            semantic_status = self.analyze_semantic_state(cpu, ram, gpu, batt, disks, net)
+            
+            if isinstance(disks, list):
+                disk_parts = []
+                for d in disks:
+                    info = f"{d['mount']} {d['free_gb']}GB Livre ({d['free_percent']:.0f}%)"
+                    disk_parts.append(info)
+                disk_str = " | ".join(disk_parts)
+            else:
+                disk_str = "Leitura de disco indisponível"
+
+            # Monta o contexto para o LLM
+            context_str = (
+                f"[DIAGNÓSTICO DE SISTEMA J.A.R.V.I.S.]\n"
+                f"{semantic_status}\n"
+                f"\n[TELEMETRIA TÉCNICA]\n"
+                f"- CPU: {cpu}% (Top Apps: {top_apps_str})\n"
+                f"- RAM: {ram['percent']}% ({ram['used_gb']}GB usados)\n"
+                f"- GPU: {gpu['name']} ({gpu.get('temp', 0)}°C)\n"
+                f"- Rede: ↓{net['download_speed']} | ↑{net['upload_speed']}\n"
+                f"- Disco: {disk_str}\n"
+                f"- Energia: {batt['percent']}% ({'AC' if batt['plugged'] else 'Bateria'})\n"
+            )
+            return context_str
+            
+        except Exception as e:
+            log.critical(f"⚠️ Erro ao ler sensores: {e}")
+            return "[ERRO: Sensores offline. Impossível ler status do sistema]"
+
+    def get_detailed_hardware_context(self):
+        """Busca os dados estáticos do banco e formata para o Prompt."""
+        try:
+            # Importante: db agora está disponível na classe via self ou import global
+            raw_specs = db.get_system_specs() 
+            return f"\n[ARQUIVO CONFIDENCIAL DE HARDWARE - NÃO INVENTE DADOS]\n{raw_specs}"
+        except Exception as e:
+            log.error(f"Erro ao buscar contexto de hardware: {e}")
+            return ""

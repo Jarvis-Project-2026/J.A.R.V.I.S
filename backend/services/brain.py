@@ -6,7 +6,6 @@ import re
 import subprocess
 from core import settings, SystemInfo, log, db, manager
 
-
 # --- A ALMA DO J.A.R.V.I.S. ---
 SYSTEM_PROMPT = {
     'role': 'system',
@@ -178,7 +177,7 @@ def process_system_alert(message, is_proactive=False):
                 return
 
             # 1. Identifica o culpado
-            culprit_match = re.search(r"(?:Top 5|Maiores consumos): (.*?)\s*\(", message)
+            culprit_match = re.search(r"(?:Top 5|Maiores consumos|Consumo): (.*?)\s*\(", message)
             culprit_app = culprit_match.group(1).strip() if culprit_match else None
 
             if culprit_app:
@@ -243,136 +242,13 @@ chat_history = []
 # Contexto para ações proativas que aguardam autorização do usuário (Ex: Fechar app pesado)
 pending_critical_action = None 
 
-def analyze_semantic_state(cpu, ram, gpu, batt, disks, net):
-    """Gera uma narrativa de estado (Mood do JARVIS) baseada em TODOS os sensores."""
-    states = []
-    
-    # --- PROCESSAMENTO (O Cérebro) ---
-    if cpu < 5:
-        states.append("STATUS CPU: OCIOSIDADE PROFUNDA (Potencial de processamento desperdiçado. Tédio detectado.)")
-    elif cpu > 90:
-        states.append("STATUS CPU: CRÍTICO (Processador em regime de esforço máximo. Risco de thermal throttling.)")
-    elif cpu > 60:
-        states.append("STATUS CPU: ALTA DEMANDA (Foco total em tarefas computacionais.)")
-
-    # --- MEMÓRIA (A Consciência) ---
-    if ram['percent'] > 90:
-        states.append("STATUS RAM: SATURAÇÃO IMINENTE (Swap file ativado. O sistema está engasgando.)")
-    elif ram['percent'] < 30:
-        states.append("STATUS RAM: DISPONIBILIDADE PLENA (Memória livre para grandes compilações.)")
-
-    # --- DISCO (Armazenamento) ---
-    if isinstance(disks, list):
-        for d in disks:
-            free_gb = d.get('free_gb', 100) 
-            mount = d.get('mount', '?')
-            
-            if free_gb < 10:
-                states.append(f"STATUS DISCO ({mount}): CRÍTICO (Apenas {free_gb}GB livres. Falha iminente.)")
-            elif free_gb < 20:
-                states.append(f"STATUS DISCO ({mount}): ALERTA (Espaço baixo: {free_gb}GB.)")
-
-    # --- VÍDEO (A Visão) ---
-    if gpu.get('temp', 0) > 80:
-        states.append(f"STATUS GPU: SUPERAQUECIMENTO ({gpu['temp']}°C). Ventoinhas operando no limite audível.")
-    elif gpu.get('load', 0) > 80:
-        states.append("STATUS GPU: RENDERIZAÇÃO INTENSA (Processamento gráfico prioritário.)")
-
-    # --- REDE (A Conectividade) ---
-    down_speed = net.get('download_speed', '0B/s')
-    try:
-        if "MB/s" in down_speed:
-            val = float(down_speed.replace("MB/s", "").strip())
-            if val > 15.0:
-                states.append(f"STATUS REDE: INFLUXO MASSIVO DE DADOS ({down_speed}). Banda larga saturada.")
-        elif "GB/s" in down_speed:
-             states.append(f"STATUS REDE: VELOCIDADE DE FIBRA ÓPTICA EXTREMA ({down_speed}).")
-    except ValueError:
-        pass
-        
-    # Monitor de Instabilidade (Pacotes perdidos ou Erros)
-    net_errors = net.get('errin', 0) + net.get('errout', 0)
-    net_drops = net.get('dropin', 0) + net.get('dropout', 0)
-    
-    if net_errors > 50 or net_drops > 50:
-         states.append("STATUS REDE: INSTABILIDADE (Detectados pacotes perdidos ou erros na transmissão. Conexão degradada.)")
-
-    # --- ENERGIA (A Vida) ---
-    if not batt['plugged']:
-        if batt['percent'] < 15:
-            states.append("STATUS ENERGIA: EMERGÊNCIA (Reservas esgotadas. Desligamento iminente.)")
-        elif batt['percent'] < 50:
-            states.append("STATUS ENERGIA: MODO ECONOMIA (Operando apenas com suporte vital.)")
-    else:
-        if batt['percent'] == 100:
-            states.append("STATUS ENERGIA: POTÊNCIA MÁXIMA (Reator Arc em 100%.)")
-
-    # Se estiver tudo normal
-    if not states:
-        states.append("STATUS GERAL: NOMINAL (Todos os sistemas operando dentro dos parâmetros ideais de Stark Industries.)")
-
-    return " | ".join(states)
-
-def get_realtime_context():
-    """
-    Coleta TODOS os dados e aplica a camada de personalidade Stark.
-    """
-    try:
-        # 1. Coleta os dados brutos
-        cpu = sys_monitor.get_cpu_usage() 
-        ram = sys_monitor.get_ram_usage()
-        gpu = sys_monitor.get_gpu_info()
-        batt = sys_monitor.get_battery_status()
-        disks = sys_monitor.get_disk_space()
-        net = sys_monitor.get_network_speed()
-        top_cpu_apps = sys_monitor.get_top_processes('cpu', limit=3)
-        top_apps_str = ", ".join(top_cpu_apps) if top_cpu_apps else "Nenhum destaque"
-
-        # Gera a interpretação rica
-        semantic_status = analyze_semantic_state(cpu, ram, gpu, batt, disks, net)
-        
-        if isinstance(disks, list):
-            disk_parts = []
-            for d in disks:
-                info = f"{d['mount']} {d['free_gb']}GB Livre ({d['free_percent']:.0f}%)"
-                disk_parts.append(info)
-            disk_str = " | ".join(disk_parts)
-        else:
-            disk_str = "Leitura de disco indisponível"
-
-        # Monta o contexto para o LLM
-        context_str = (
-            f"[DIAGNÓSTICO DE SISTEMA J.A.R.V.I.S.]\n"
-            f"{semantic_status}\n"
-            f"\n[TELEMETRIA TÉCNICA]\n"
-            f"- CPU: {cpu}% (Top Apps: {top_apps_str})\n"
-            f"- RAM: {ram['percent']}% ({ram['used_gb']}GB usados)\n"
-            f"- GPU: {gpu['name']} ({gpu.get('temp', 0)}°C)\n"
-            f"- Rede: ↓{net['download_speed']} | ↑{net['upload_speed']}\n"
-            f"- Disco: {disk_str}\n"
-            f"- Energia: {batt['percent']}% ({'AC' if batt['plugged'] else 'Bateria'})\n"
-        )
-        return context_str
-        
-    except Exception as e:
-        log.critical(f"⚠️ Erro ao ler sensores: {e}")
-        return "[ERRO: Sensores offline. Impossível ler status do sistema]"
-    
-def get_detailed_hardware_context():
-    """Busca os dados estáticos do banco e formata para o Prompt."""
-    try:
-        raw_specs = db.get_system_specs() 
-        return f"\n[ARQUIVO CONFIDENCIAL DE HARDWARE - NÃO INVENTE DADOS]\n{raw_specs}"
-    except Exception as e:
-        log.error(f"Erro ao buscar contexto de hardware: {e}")
-        return ""
 
 def classify_intent(text):
     """ ROTEADOR DE INTENÇÃO: Classifica o comando do usuário em categorias. """
     
     # 1. Recupera as skills ativas para inserir no Schema (Isso guia a IA para não alucinar intents)
     active_skills = list(manager.skills.keys())
-    valid_intents = ["SHUTDOWN", "HARDWARE", "MEMORY_READ", "MEMORY_WRITE", "CHAT"] + active_skills
+    valid_intents = ["HARDWARE", "MEMORY_READ", "MEMORY_WRITE", "CHAT"] + active_skills
     
     # Formata como: "SHUTDOWN" | "HARDWARE" | "OPEN_APP" ...
     options_str = " | ".join([f'"{opt}"' for opt in valid_intents])
@@ -394,20 +270,24 @@ def classify_intent(text):
     2. Se houver um nome de aplicativo ou objeto no comando, ele DEVE ir para o campo 'entity'.
     3. Nunca use "null" para 'entity' se houver um substantivo alvo na frase.
     4. Priorize as SKILLS DINÂMICAS. Use "CHAT" apenas se for uma saudação ou conversa vazia.
+    5. Se o comando envolver uma AÇÃO (desligar, abrir, tocar, etc), ele NUNCA será MEMORY_WRITE ou MEMORY_READ.
 
     # DEFINIÇÃO DE CATEGORIAS:
-    - SHUTDOWN: Comando para desligar o seu próprio sistema.
-    - HARDWARE: Perguntas técnicas sobre CPU, RAM, GPU.
-    - {options_str}: Categorias válidas para este comando.
-
-    # SKILLS E SEUS OBJETIVOS:
+    - HARDWARE: Perguntas técnicas sobre as especificações do PC (CPU, RAM, GPU).
+    - MEMORY_WRITE: Use APENAS quando o usuário fornecer uma informação pessoal para você memorizar (Ex: "Meu nome é...", "Eu moro em...", "Memorize que meu time é...").
+    - MEMORY_READ: Use quando o usuário perguntar algo sobre si mesmo ou da sua vida pessoal que você deveria saber (Ex: "Quem sou eu?", "Onde eu moro?", "Qual o nome do meu pai?").
+    - CHAT: Saudações, conversas casuais, piadas ou quando nenhuma outra categoria se encaixar.
+    - {options_str}: Categorias dinâmicas disponíveis.
+    
+    # SKILLS E SEUS OBJETIVOS (PRIORIDADE ALTA):
     {skills_prompts}
     
     # EXEMPLOS:
-    - "Boa noite, Jarvis" -> {{"intent": "SHUTDOWN", "entity": null, "confidence": 1.0}}
     - "fechar o spotify" -> {{"intent": "APP_CONTROL", "entity": "spotify", "confidence": 1.0}}
-    - "abrir a calculadora" -> {{"intent": "APP_CONTROL", "entity": "calculadora", "confidence": 1.0}}
-    - "como está meu pc?" -> {{"intent": "HARDWARE", "entity": null, "confidence": 1.0}}
+    - "encerrar o computador" -> {{"intent": "SYSTEM_SECURITY", "entity": null, "confidence": 1.0}}
+    - "proteger estação" -> {{"intent": "SYSTEM_SECURITY", "entity": null, "confidence": 1.0}}
+    - "quem sou eu?" -> {{"intent": "MEMORY_READ", "entity": null, "confidence": 1.0}}
+    - "meu nome é felipe" -> {{"intent": "MEMORY_WRITE", "entity": "felipe", "confidence": 1.0}}
 
     Comando do Usuário: "{text}"
     Schema de Resposta: {schema}
@@ -427,33 +307,51 @@ def classify_intent(text):
         log.error(f"Erro no parsing do Classificador: {e}")
         return {"intent": "CHAT", "entity": None, "confidence": 0.0}
 
-def ask_local_ai(text, intent_type="CHAT"):
+def ask_local_ai(text, intent_type="CHAT", entity=None):
     global chat_history
     
     sys_instruction = SYSTEM_PROMPT['content']
     hw_context = ""
     mem_context = ""
 
-    # Injeção Dinâmica
+    # --- Lógica de Hardware ---
     if intent_type == "HARDWARE":
-        hw_context = f"\n[DADOS DE HARDWARE]:\n{get_detailed_hardware_context()}\nUSE ISSO."
+        hw_context = f"\n[DADOS DE HARDWARE]:\n{sys_monitor.get_detailed_hardware_context()}\nUSE ISSO."
         sys_instruction += hw_context
-    
-    elif intent_type == "MEMORY_READ":
-        # Busca híbrida (Exata + Semântica)
+
+    # --- Lógica de Memória Otimizada ---
+    elif intent_type == "MEMORY_READ" or intent_type == "CHAT":
         memories = []
-        words = [w for w in text.split() if len(w) > 3]
-        for w in words: # 1. Busca Exata
-            val = db.get_memory(w)
-            if val: memories.append(f"{w}: {val}")
-        
-        related = db.search_relevant_context(text) # 2. Busca Semântica
-        if related: memories.append("Histórico: " + " | ".join([c[1] for c in related]))
-        
-        if memories: mem_context = f"\n[MEMÓRIA]: {'; '.join(memories)}"
+        # Busca direta pela chave (entity)
+        if entity:
+            value = db.get_memory(entity)
+            if value:
+                memories.append(f"{entity}: {value}")
+        # Fallback: busca por valor (termo relevante no texto)
+        if not memories:
+            # Busca por todos os campos da tabela memory
+            # Recupera todas as chaves dinamicamente do banco de dados
+            all_keys = db.get_all_memory_keys()
+            for key in all_keys:
+                val = db.get_memory(key)
+                if val and (key in text.lower() or (isinstance(val, str) and val.lower() in text.lower())):
+                    memories.append(f"{key}: {val}")
+        # Se ainda não achou nada, tenta trazer tudo (último recurso)
+        if not memories:
+            for key in db.get_all_memory_keys():
+                val = db.get_memory(key)
+                if val:
+                    memories.append(f"{key}: {val}")
+                    break  # Só traz um para não poluir
+        # Recupera histórico recente de conversas para contexto
+        related = db.search_relevant_context(text)
+        if related:
+            memories.append("Histórico: " + " | ".join([c[1] for c in related]))
+        if memories:
+            mem_context = f"\n[CONTEXTO RECUPERADO]: {'; '.join(memories)}"
 
     # Prompt Final
-    live_data = get_realtime_context()
+    live_data = sys_monitor.get_realtime_context()
     messages = [
         {'role': 'system', 'content': sys_instruction},
         {'role': 'system', 'content': f"LIVE DATA: {live_data}{mem_context}"}
@@ -461,14 +359,14 @@ def ask_local_ai(text, intent_type="CHAT"):
 
     # Temperatura dinâmica: Fria para Hardware, Quente para Chat
     temp = 0.1 if intent_type == "HARDWARE" else 0.7
-    
-    # Usa o novo wrapper
+
     reply = query_ollama(messages, temperature=temp)
-    
+
     if reply:
         clean = reply.replace("*", "").replace("#", "").strip()
         chat_history.append({'role': 'assistant', 'content': clean})
-        if len(chat_history) > 6: chat_history = chat_history[-6:]
+        if len(chat_history) > 6:
+            chat_history = chat_history[-6:]
         return clean
     return "Erro de processamento neural."
 
@@ -503,12 +401,8 @@ def execute_command(command):
     entity = decision.get("entity")
     log.info(f"🧠 [INTENÇÃO DETECTADA]: {intent} (Confiança: {decision.get('confidence')})")
 
-    # --- CASO 1: DESLIGAR O SISTEMA ---
-    if intent == "SHUTDOWN":
-        return "PROTOCOL_SHUTDOWN"
-
-    # --- CASO 2: GRAVAR MEMÓRIA (Antigo extract_memories) ---
-    elif intent == "MEMORY_WRITE":
+    # --- CASO 1: GRAVAR MEMÓRIA (Antigo extract_memories) ---
+    if intent == "MEMORY_WRITE":
         speak("Processando nova memória...") # Feedback de áudio
         return extract_fact_to_memory(command)
     
@@ -521,7 +415,7 @@ def execute_command(command):
     # --- CASO 4: CONSULTAS (Hardware, Memória ou Chat Geral) ---
     else:
         # Passamos a intenção para o ask_local_ai preparar o contexto correto
-        return ask_local_ai(command, intent_type=intent)
+        return ask_local_ai(command, intent_type=intent, entity=entity)
 
 def extract_fact_to_memory(text):
     prompt = f"""
@@ -578,14 +472,6 @@ def start_brain():
                 
                 response_text = execute_command(command)
 
-                if response_text == "PROTOCOL_SHUTDOWN":
-                    try:
-                        ear_pause()
-                        speak("Desativando núcleo de força. Até logo.")
-                    finally:
-                        ear_resume()
-                    break
-
                 if response_text:
                     try:
                         ear_pause()   # Pausa para não se ouvir
@@ -594,7 +480,7 @@ def start_brain():
                         ear_resume()  # Retoma audição
 
         except KeyboardInterrupt:
-            log.info("\n[SISTEMA] Encerrado manualmente.")
+            log.info("[SISTEMA] Encerrado manualmente.")
             break
         except Exception as e:
             log.critical(f"❌ [ERRO CRÍTICO]: {e}")
