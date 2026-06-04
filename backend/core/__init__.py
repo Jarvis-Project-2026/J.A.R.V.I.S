@@ -2,9 +2,11 @@ import logging
 from .config import settings
 from .logger import log
 from .database import db
+from .obsidian import obsidian, mcp_client, get_vault_context
 from .skill_loader import manager
 from .SystemInfo import SystemInfo
 from .bridge import JarvisAPI
+from .prompts import load_prompt
 
 # --- 1. Filtro de Poluição (Noise Reduction) ---
 # Silencia bibliotecas que "falam demais" no console
@@ -19,4 +21,4 @@ LIBRARIES_TO_SILENCE = [
 for lib in LIBRARIES_TO_SILENCE:
     logging.getLogger(lib).setLevel(logging.WARNING)
 
-__all__ = ["settings", "log", "db", "manager", "SystemInfo", "JarvisAPI"]
+__all__ = ["settings", "log", "db", "obsidian", "mcp_client", "get_vault_context", "manager", "SystemInfo", "JarvisAPI", "load_prompt"]

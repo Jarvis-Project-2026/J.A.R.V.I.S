@@ -3,17 +3,22 @@ import time
 import sys
 import os
 import threading
+import secrets
+
+# Token de sessão criptográfico único para todas as interações de voz do ciclo de execução atual
+voice_session_id = f"voice_{secrets.token_urlsafe(32)}"
 
 # Importa as configurações, o Logger e agora a Memória (Database)
-from core import settings, log, db, JarvisAPI, manager
-
+from core import settings, log, db, obsidian, JarvisAPI, manager
 
 # --- IMPORTAÇÃO DOS MÓDULOS ---
 try:
     log.debug("Carregando serviços cognitivos (Audição, Fala, Cérebro)...")
     from services.listen import listen, ear_pause, ear_resume
     from services.speak import speak
-    from services.brain import execute_command, sys_monitor, process_system_alert
+    from services.brain import execute_command
+    from core.alerts import process_system_alert
+    from core.state import sys_monitor
     log.info("Serviços cognitivos carregados com sucesso.")
 except ImportError as e:
     log.critical(f"Falha na importação dos módulos de serviço: {e}")
@@ -27,7 +32,7 @@ def update_ui(status, message=""):
     if window_instance and is_running:
         # Garante que message seja string para evitar erro no replace se vier None
         msg_str = str(message) if message else ""
-        clean_msg = msg_str.replace("'", "\\'").replace('"', '\\"').replace("\n", " ")
+        clean_msg = msg_str.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"').replace("\n", " ")
         
         # Se mensagem for vazia, chamamos apenas com status (depende do seu JS)
         # Mas para segurança, enviamos os dois
@@ -59,21 +64,11 @@ def ui_aware_alert_callback(message, is_proactive=False, is_status_signal=False)
 def jarvis_auto_loop():
     global is_running, window_instance
     
-    time.sleep(4) 
+    time.sleep(4)
     log.info(f"Interface Gráfica Conectada. Loop principal ativo.")
     sys_monitor.brain_callback = ui_aware_alert_callback
     sys_monitor.start_proactive_monitor(interval=3)  # Verificações a cada 3 segundos
 
-    # --- PROTOCOLO DE BOOT (Saudação Dinâmica) ---
-    if "SYSTEM_REPORT" in manager.skills:
-        msg_boas_vindas = manager.skills["SYSTEM_REPORT"].execute(None, "boot_protocol_auto")
-    else:
-        user_name = db.get_memory("nome") or "Senhor"
-        msg_boas_vindas = f"Sistemas sincronizados. Bem-vindo de volta, {user_name}."
-
-    update_ui("SPEAKING", msg_boas_vindas)
-    speak(msg_boas_vindas)
-    
     while is_running:
         try:
             log.debug("Estado: Ouvindo...")
@@ -83,11 +78,11 @@ def jarvis_auto_loop():
 
             if command and is_running:
                 # SALVAR NO HISTÓRICO (Entrada do Usuário)
-                db.log_interaction("user", command)
+                db.log_interaction("user", command, voice_session_id)
                 
                 log.info(f"Comando recebido: '{command}'")
                 update_ui("PROCESSING", f"Processando: {command}")
-                response_text = execute_command(command)
+                response_text = execute_command(command, session_id=voice_session_id)
 
                 if response_text == "PROTOCOL_SHUTDOWN":
                     log.warning("Iniciando sequência de encerramento total.")
@@ -107,7 +102,7 @@ def jarvis_auto_loop():
 
                 if response_text:
                     # SALVAR NO HISTÓRICO (Resposta do JARVIS)
-                    db.log_interaction("assistant", response_text)
+                    db.log_interaction("assistant", response_text, voice_session_id)
                     
                     def on_audio_start():
                         update_ui("SPEAKING", response_text)
@@ -125,9 +120,20 @@ def jarvis_auto_loop():
     
     log.info("Loop principal encerrado.")
 
+def do_boot_greeting():
+    if "SYSTEM_REPORT" in manager.skills:
+        msg = manager.skills["SYSTEM_REPORT"].execute(None, "boot_protocol_auto")
+    else:
+        user_name = obsidian.get_memory("nome") or "Senhor"
+        msg = f"Sistemas sincronizados. Bem-vindo de volta, {user_name}."
+    update_ui("SPEAKING", msg)
+    speak(msg)
+    update_ui("IDLE", "")
+
 # --- API JS <-> PYTHON ---
 window_instance = None
 api = JarvisAPI(sys_monitor)
+api.boot_greeting_fn = do_boot_greeting
 
 # --- INICIALIZAÇÃO ---
 def start_jarvis():
@@ -145,16 +151,23 @@ def start_jarvis():
         title=settings.PROJECT_NAME,
         url=html_path,
         js_api=api,
-        fullscreen=True,
+        width=1280,
+        height=800,
+        fullscreen=False,
         frameless=True,
+        resizable=True,
         background_color='#000000',
-        easy_drag=True,
-        
+        easy_drag=False,
     )
 
     api.set_window(window_instance)
     t = threading.Thread(target=jarvis_auto_loop, daemon=True)
     t.start()
+
+    def on_shown():
+        window_instance.maximize()
+
+    window_instance.events.shown += on_shown
 
     webview.start(debug=settings.DEBUG)
 

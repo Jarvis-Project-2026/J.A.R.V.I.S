@@ -20,31 +20,32 @@ class DatabaseManager:
             raise
 
     def _initialize_tables(self):
-        """Cria a estrutura de tabelas (Memória, Histórico e Hardware)."""
+        """Cria a estrutura de tabelas (Config, Histórico e Hardware)."""
         conn = self._get_connection()
         cursor = conn.cursor()
-        
+
         try:
-            # 1. Memória (Preferências/Fatos)
+            # 1. Config (Estado da aplicação: skills ativas/inativas, preferências de UI)
             cursor.execute('''
-                CREATE TABLE IF NOT EXISTS memory (
+                CREATE TABLE IF NOT EXISTS config (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
 
-            # 2. Histórico (Logs de Conversa)
+            # 2. Histórico (Logs de Conversa com session_id)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL DEFAULT 'default',
                     role TEXT NOT NULL,
                     content TEXT NOT NULL,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
 
-            # 3. Hardware (Identidade da Máquina) - NOVA TABELA
+            # 3. Hardware (Identidade da Máquina)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS hardware (
                     component TEXT PRIMARY KEY,
@@ -52,9 +53,36 @@ class DatabaseManager:
                     detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-            
+
+            # 4. Sessions (Título customizado e Fixação de Chats)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    is_pinned INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            # Migração automática e retrocompatível: garante que banco existente ganhe a coluna session_id
+            cursor.execute("PRAGMA table_info(history)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if "session_id" not in columns:
+                cursor.execute("ALTER TABLE history ADD COLUMN session_id TEXT NOT NULL DEFAULT 'default'")
+                log.info("Migração de banco executada: coluna 'session_id' adicionada à tabela history.")
+
+            # Garante que bancos com a tabela antiga ganhem a coluna is_pinned
+            cursor.execute("PRAGMA table_info(sessions)")
+            session_cols = [col[1] for col in cursor.fetchall()]
+            if "is_pinned" not in session_cols:
+                cursor.execute("ALTER TABLE sessions ADD COLUMN is_pinned INTEGER DEFAULT 0")
+                log.info("Migração de banco executada: coluna 'is_pinned' adicionada à tabela sessions.")
+
+            # Cria índice na coluna session_id para consultas super rápidas (agora que a coluna 100% existe)
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_history_session ON history(session_id)')
+
             conn.commit()
-            log.info("Banco de dados verificado (Tabelas: Memory, History, Hardware).")
+            log.info("Banco de dados verificado (Tabelas: Config, History, Hardware, Sessions).")
         except sqlite3.Error as e:
             log.error(f"Erro ao criar estrutura do banco de dados: {e}")
         finally:
@@ -107,71 +135,83 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    # --- MÉTODOS DE MEMÓRIA (KEY-VALUE) ---
-    def save_memory(self, key: str, value: Any):
+    # --- MÉTODOS DE CONFIG (Estado da aplicação: skills, preferências de UI) ---
+    def save_config(self, key: str, value: Any):
         conn = self._get_connection()
         cursor = conn.cursor()
-        
+
         if not isinstance(value, str):
             value = json.dumps(value)
 
         try:
             cursor.execute('''
-                INSERT INTO memory (key, value, updated_at) 
+                INSERT INTO config (key, value, updated_at)
                 VALUES (?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(key) DO UPDATE SET 
-                    value=excluded.value, 
+                ON CONFLICT(key) DO UPDATE SET
+                    value=excluded.value,
                     updated_at=CURRENT_TIMESTAMP
             ''', (key, value))
             conn.commit()
-            log.debug(f"Memória persistida: [{key}]")
+            log.debug(f"Config persistida: [{key}]")
         except sqlite3.Error as e:
-            log.error(f"Falha ao salvar memória '{key}': {e}")
+            log.error(f"Falha ao salvar config '{key}': {e}")
         finally:
             conn.close()
 
-    def get_memory(self, key: str) -> Optional[Any]:
+    def get_config(self, key: str) -> Optional[Any]:
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute('SELECT value FROM memory WHERE key = ?', (key,))
+            cursor.execute('SELECT value FROM config WHERE key = ?', (key,))
             result = cursor.fetchone()
             if result:
                 data = result[0]
                 try:
                     return json.loads(data)
-                except:
+                except Exception:
                     return data
             return None
         except sqlite3.Error as e:
-            log.error(f"Erro ao ler memória '{key}': {e}")
+            log.error(f"Erro ao ler config '{key}': {e}")
             return None
-        finally:
-            conn.close()
-
-    def get_all_memory_keys(self) -> list:
-        """Retorna todas as chaves cadastradas na tabela memory."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('SELECT key FROM memory')
-            rows = cursor.fetchall()
-            return [row[0] for row in rows]
-        except sqlite3.Error as e:
-            log.error(f"Erro ao listar chaves de memória: {e}")
-            return []
         finally:
             conn.close()
 
     # --- MÉTODOS DE HISTÓRICO ---
-    def log_interaction(self, role: str, content: str):
+    def log_interaction(self, role: str, content: str, session_id: str = 'default'):
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute('INSERT INTO history (role, content) VALUES (?, ?)', (role, content))
+            cursor.execute('INSERT INTO history (role, content, session_id) VALUES (?, ?, ?)', (role, content, session_id))
             conn.commit()
         except sqlite3.Error as e:
-            log.error(f"Falha ao registrar histórico: {e}")
+            log.error(f"Falha ao registrar histórico para sessão '{session_id}': {e}")
+        finally:
+            conn.close()
+
+    def delete_history_from(self, session_id: str, message_id: int):
+        """Apaga todos os logs de conversa de uma sessão a partir de um ID de mensagem específico."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('DELETE FROM history WHERE session_id = ? AND id >= ?', (session_id, message_id))
+            conn.commit()
+            log.info(f"Limpeza de histórico executada no SQLite: deletadas mensagens a partir de '{message_id}' na sessão '{session_id}'.")
+        except sqlite3.Error as e:
+            log.error(f"Falha ao deletar histórico para sessão '{session_id}' a partir de '{message_id}': {e}")
+        finally:
+            conn.close()
+
+    def update_history_message(self, message_id: int, new_content: str):
+        """Atualiza o conteúdo de uma mensagem específica no banco de dados."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('UPDATE history SET content = ? WHERE id = ?', (new_content, message_id))
+            conn.commit()
+            log.info(f"Mensagem '{message_id}' atualizada no SQLite com o novo prompt.")
+        except sqlite3.Error as e:
+            log.error(f"Falha ao atualizar mensagem '{message_id}': {e}")
         finally:
             conn.close()
             

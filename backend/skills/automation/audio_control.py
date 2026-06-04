@@ -3,53 +3,18 @@ import json
 import requests  # Adicionado para fazer a requisição direta
 from core.config import settings # Para pegar o IP e Modelo definidos no config
 from core import log
+from core.prompts import load_prompt
 from ctypes import cast, POINTER
-from comtypes import CLSCTX_ALL, CoInitialize
+from comtypes import CLSCTX_ALL, CoInitialize, CoUninitialize
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 
 # --- CONFIGURAÇÃO PARA O ROTEADOR ---
 INTENT = "AUDIO_CONTROL"
 
-PROMPT_TEXT = """
-- AUDIO_CONTROL: Manipular volume do sistema.
-  Use quando: O usuário quiser aumentar, diminuir, mutar, desmutar ou definir o volume.
-"""
+PROMPT_TEXT = load_prompt("skills/audio_control.md")
 
 # --- CÉREBRO ESPECÍFICO DA SKILL (ATUALIZADO) ---
-AUDIO_DECISION_PROMPT = """
-Você é o Subsistema de Controle de Áudio do J.A.R.V.I.S.
-Sua função é traduzir comandos naturais (educados ou agressivos) para instruções técnicas precisas.
-
-SAÍDA: Apenas um JSON válido. Sem texto, sem explicações.
-FORMATO: { "action": "...", "value": ... }
-
-Mapeamento de Intenções:
-1. SILÊNCIO / RETORNO
-   - "Cala a boca", "Silêncio", "Mute" -> {"action": "mute", "value": null}
-   - "Volta o som", "Desmuta" -> {"action": "unmute", "value": null}
-
-2. DEFINIÇÃO EXATA ("PARA", "ATÉ", "EM" + NÚMERO, "MAXIMO", "MINIMO") -> Ação é SEMPRE "set".
-   - "Aumenta ATÉ 50" -> {"action": "set", "value": 50}
-   - "Baixa PARA 20" -> {"action": "set", "value": 20}
-   - "Volume EM 100" -> {"action": "set", "value": 100}
-   - "Volume 50" -> {"action": "set", "value": 50}
-   - "Volume MAXIMO" -> {"action": "set", "value": 100}
-   - "Volume MINIMO" -> {"action": "set", "value": 10}
-
-3. AJUSTE RELATIVO (Apenas VERBO + NÚMERO ou INTENSIDADE)
-   - "Aumenta 10" -> {"action": "increase", "value": 10}
-   - "Diminui um pouco" -> {"action": "decrease", "value": 10}
-   - "Tá muito alto" -> {"action": "decrease", "value": 30}
-   - "Sobe o som" -> {"action": "increase", "value": 15}
-
-4. INFORMAÇÃO ("Quanto tá o volume?", "Nível de áudio"):
-   -> {"action": "info", "value": null}
-
-Exemplos de Treinamento:
-User: "Tá muito baixo, não ouço nada" -> {"action": "increase", "value": 30}
-User: "Coloca uma música ambiente (volume baixo)" -> {"action": "set", "value": 20}
-User: "J.A.R.V.I.S., tá gritando muito" -> {"action": "decrease", "value": 30}
-"""
+AUDIO_DECISION_PROMPT = load_prompt("skills/audio_decision.md")
 
 # --- FUNÇÃO LOCAL DE LLM (O CÉREBRO ISOLADO) ---
 def _ask_ollama_audio_expert(user_text):

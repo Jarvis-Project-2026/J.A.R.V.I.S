@@ -32,17 +32,21 @@ class Settings:
     
     # --- Configurações de IA Local (Ollama) ---
     # Agora o modelo é controlado por aqui. Se mudar no .env, muda no cérebro todo.
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
-    OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "localhost:11434")
-    
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL")
+    OLLAMA_HOST: str = os.getenv("OLLAMA_HOST")
+
+    # --- Configurações do Obsidian (Memória de Longo Prazo) ---
+    OBSIDIAN_HOST: str = os.getenv("OBSIDIAN_HOST")
+    OBSIDIAN_API_KEY: str = os.getenv("OBSIDIAN_API_KEY")
+
     # Adicionado: Timeouts Globais (Robustez de Rede)
     TIMEOUT_API: int = 10  # Segundos para esperar a IA responder
     TIMEOUT_VOICE: int = 5 # Segundos para esperar o reconhecimento de voz
 
     # --- Configurações de Áudio (Listen/Speak) ---
     DEFAULT_LANGUAGE: str = "pt-BR"
-    SPEECH_RATE: int = int(os.getenv("SPEECH_RATE", 200))    # Velocidade da fala
-    MIC_INDEX: int = int(os.getenv("MIC_INDEX", 0)) # Índice do microfone padrão
+    SPEECH_RATE: int = int(os.getenv("SPEECH_RATE"))    # Velocidade da fala
+    MIC_INDEX: int = int(os.getenv("MIC_INDEX")) # Índice do microfone padrão
 
     # --- Configurações do Banco de Dados ---
     DB_NAME: str = "jarvis_memory.db"

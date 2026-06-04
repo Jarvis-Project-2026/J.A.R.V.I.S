@@ -53,8 +53,11 @@ class SystemInfo:
         # Cooldown: Tempo em segundos para repetir o alerta (120s = 2 min)
         self.REMINDER_COOLDOWN = 120
 
+        # CPU cache — um único sampler thread alimenta; todos os leitores consomem daqui
+        self._cpu_cache = 0.0
+        self._start_cpu_sampler()
+
         # Inicializa leituras
-        psutil.cpu_percent(interval=None)
         self.last_time = time.time()
         
         # Rede e Disco iniciais
@@ -65,6 +68,15 @@ class SystemInfo:
         disk = psutil.disk_io_counters()
         self.last_disk_read = disk.read_bytes if disk else 0
         self.last_disk_write = disk.write_bytes if disk else 0
+
+    def _start_cpu_sampler(self):
+        """Único thread que lê psutil.cpu_percent, evitando race condition entre callers."""
+        def _sample():
+            psutil.cpu_percent(interval=None)  # prime
+            while True:
+                time.sleep(1)
+                self._cpu_cache = psutil.cpu_percent(interval=None)
+        threading.Thread(target=_sample, daemon=True).start()
 
     def _get_size(self, bytes, suffix="B"):
         """Formata bytes para KB, MB, GB de forma legível."""
@@ -135,7 +147,7 @@ class SystemInfo:
     # --- MÉTODOS EXIGIDOS PELO BRAIN.PY (Restaurados) ---
     def get_cpu_usage(self):
         """Retorna apenas a porcentagem simples (float)."""
-        return psutil.cpu_percent(interval=None)
+        return self._cpu_cache
 
     def get_battery_status(self):
         """Retorna status da bateria formatado."""
@@ -166,7 +178,7 @@ class SystemInfo:
         """Retorna uso, frequência e núcleos."""
         freq = psutil.cpu_freq()
         return {
-            "usage": psutil.cpu_percent(interval=None),
+            "usage": self._cpu_cache,
             "cores_logical": psutil.cpu_count(logical=True),
             "cores_physical": psutil.cpu_count(logical=False),
             "freq_current": f"{freq.current:.0f}Mhz" if freq else "N/A"
@@ -267,9 +279,12 @@ class SystemInfo:
 
     def get_system_general(self):
         boot_time_timestamp = psutil.boot_time()
+        # Tempo decorrido absoluto livre de descompassos de timezone
+        uptime_seconds = max(0, time.time() - boot_time_timestamp)
+        uptime = timedelta(seconds=int(uptime_seconds))
+        uptime_str = str(uptime)
+
         bt = datetime.fromtimestamp(boot_time_timestamp)
-        uptime = datetime.now() - bt
-        uptime_str = str(uptime).split('.')[0] 
 
         return {
             "uptime": uptime_str,

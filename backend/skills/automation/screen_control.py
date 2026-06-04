@@ -7,6 +7,7 @@ import math
 from ctypes import wintypes
 from core import log
 from core.config import settings
+from core.prompts import load_prompt
 
 # --- CORREÇÃO DE DPI (CRUCIAL PARA ALINHAMENTO CORRETO) ---
 try:
@@ -18,8 +19,7 @@ except Exception:
 
 # --- CONFIGURAÇÃO DA SKILL ---
 INTENT = "SCREEN_CONTROL"
-PROMPT_TEXT = """- SCREEN_CONTROL: Gerenciamento avançado de monitores e conforto visual.
-  Use quando: Usuário pedir para ajustar brilho, mover janelas de app específico ("Mova o Spotify..."), ativar modo retina."""
+PROMPT_TEXT = load_prompt("skills/screen_control.md")
 
 # --- ESTRUTURAS DO WINDOWS API (Ctypes) ---
 user32 = ctypes.windll.user32
@@ -37,31 +37,7 @@ class RAMP(ctypes.Structure):
     _fields_ = [("Red", ctypes.c_ushort * 256), ("Green", ctypes.c_ushort * 256), ("Blue", ctypes.c_ushort * 256)]
 
 # --- CÉREBRO ESPECÍFICO (SCREEN EXPERT) ---
-SCREEN_EXPERT_PROMPT = """
-Você é o Controlador de Exibição do J.A.R.V.I.S.
-
-MONITORES: {monitors_info}
-HORA: {current_hour}h
-
-SAÍDA JSON:
-{
-  "action": "brightness" | "move_window" | "list_monitors" | "retina_mode",
-  "target": "nome do app" (ex: "spotify", "chrome" ou null para janela ativa),
-  "monitor": int (0=atual, 1=principal, 2=secundário, -1=alternar/próximo/trocar),
-  "align": "left" | "right" | "center" | "maximize" | "minimize" | "maintain",
-  "value": "string/int"
-}
-
-REGRAS:
-1. JANELAS:
-   - "Troca o Spotify de tela": {"action": "move_window", "target": "spotify", "monitor": -1, "align": "maintain"}
-   - "Jogue isso pra lá": {"action": "move_window", "target": null, "monitor": -1, "align": "maintain"}
-   - "Traga o Chrome para cá": {"action": "move_window", "target": "chrome", "monitor": 0, "align": "maintain"}
-   - "Minimiza o Chrome": {"action": "move_window", "target": "chrome", "monitor": 0, "align": "minimize"}
-   - Se o usuário NÃO disser "esquerda", "direita" ou "centralizar", use SEMPRE "align": "maintain".
-
-2. RETINA: "Proteger olhos" -> "retina_mode": "on".
-"""
+SCREEN_EXPERT_PROMPT = load_prompt("skills/screen_expert.md")
 
 # --- HARDWARE: MONITORES & JANELAS ---
 def get_monitors():
@@ -107,7 +83,7 @@ def get_window_placement(hwnd):
 def _ask_ollama_screen(user_text, monitors_context):
     try:
         current_hour = datetime.datetime.now().hour
-        prompt_with_context = SCREEN_EXPERT_PROMPT.replace("{monitors_info}", monitors_context).replace("{current_hour}", str(current_hour))
+        prompt_with_context = load_prompt("skills/screen_expert.md", monitors_info=monitors_context, current_hour=str(current_hour))
         
         url = f"http://{settings.OLLAMA_HOST}/api/generate"
         payload = {
