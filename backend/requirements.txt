@@ -20,7 +20,7 @@ PyAudio                     # Interface para captura de áudio do microfone
 # --- TEXT-TO-SPEECH (Síntese de Voz) ---
 edge-tts                    # Voz neural da Microsoft Edge (online, alta qualidade)
 pyttsx3                     # Motor de TTS offline (backup)
-pygame                      # Reprodução de arquivos de áudio MP3
+pygame-ce                   # Reprodução de arquivos de áudio MP3 (usando a Community Edition para suporte ao Python 3.14+)
 
 # --- CONTROLE DE SISTEMA & AUTOMAÇÃO ---
 pyautogui                   # Controle programático de Teclado e Mouse (Atalhos, Clicks)
@@ -36,6 +36,9 @@ GPUtil                      # Monitoramento de GPUs NVIDIA (temperatura, carga, 
 
 # --- REQUISIÇÕES HTTP ---
 requests                    # Cliente HTTP para APIs externas e comunicação
+
+# --- MODEL CONTEXT PROTOCOL ---
+mcp                         # SDK oficial MCP (cliente para Obsidian MCP server)
 
 # --- TERMINAL / SAÍDA COLORIDA ---
 colorama                    # Cores no terminal (usado no speak.py para typewriter effect)

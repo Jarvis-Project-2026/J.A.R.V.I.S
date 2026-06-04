@@ -22,8 +22,18 @@ class JarvisLogger:
         if self.logger.handlers:
             return
 
+        # Configura o handler de console com UTF-8 e errors='replace'
+        # para que emojis nunca causem UnicodeEncodeError no terminal Windows (cp1252)
         console_formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s', datefmt='%H:%M:%S')
         console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.stream = open(
+            sys.stdout.fileno(),
+            mode='w',
+            encoding='utf-8',
+            errors='replace',
+            closefd=False,
+            buffering=1
+        )
         console_handler.setFormatter(console_formatter)
         self.logger.addHandler(console_handler)
 

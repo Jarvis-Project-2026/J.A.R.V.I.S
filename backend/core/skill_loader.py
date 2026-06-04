@@ -28,6 +28,10 @@ class SkillManager:
                         module = importlib.util.module_from_spec(spec)
                         spec.loader.exec_module(module)
                         
+                        # Anexa metadados de categoria e nome de arquivo
+                        module.CATEGORY = os.path.basename(os.path.dirname(full_path))
+                        module.FILE_NAME = filename
+                        
                         # Verifica o Contrato (INTENT e execute)
                         if hasattr(module, "INTENT") and hasattr(module, "execute"):
                             intent_name = module.INTENT

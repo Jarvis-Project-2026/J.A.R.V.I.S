@@ -22,6 +22,25 @@ echo [SYSTEM] Variaveis de ambiente de GPU configuradas.
 echo [SYSTEM] Placa Alvo: NVIDIA GeForce GTX 1650
 echo.
 
+:: VERIFICAR E INICIAR OLLAMA
+echo [BOOT] Verificando Ollama...
+curl -s http://localhost:11434/api/tags >nul 2>&1
+if errorlevel 1 (
+    echo [BOOT] Ollama offline. Iniciando servidor...
+    start "" ollama serve
+    timeout /t 4 /nobreak >nul
+    curl -s http://localhost:11434/api/tags >nul 2>&1
+    if errorlevel 1 (
+        echo [ERRO] Ollama nao iniciou. Verifique se esta instalado.
+        pause
+        exit /b 1
+    )
+    echo [BOOT] Ollama iniciado.
+) else (
+    echo [BOOT] Ollama online.
+)
+echo.
+
 :: ENTRAR NA PASTA DO BACKEND
 cd backend
 

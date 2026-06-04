@@ -1,87 +1,77 @@
 # 📂 Backend J.A.R.V.I.S. (Just A Rather Very Intelligent System)
 
-Este diretório contém o motor lógico e a infraestrutura do assistente virtual. O projeto foi construído seguindo princípios de **Clean Architecture** e **Modularidade**, permitindo que a inteligência, os sentidos (áudio) e a memória operem de forma independente e integrada.
+Este diretório contém o motor lógico, a cognição e a infraestrutura do assistente virtual. O projeto foi construído seguindo princípios de **Modularidade Dinâmica**, permitindo que a inteligência artificial, os sentidos (áudio/visão) e a memória de longo prazo operem de forma independente e altamente extensível.
 
 ## 🎯 Objetivo do Projeto
 
-O objetivo do J.A.R.V.I.S. é ser um assistente pessoal de **IA Local** de baixa latência. Ele prioriza a privacidade e a autonomia ao rodar modelos de linguagem (LLM) diretamente no hardware do usuário, oferecendo controle sobre o computador, persistência de memória e uma interface de voz natural.
+O objetivo do J.A.R.V.I.S. é ser um assistente pessoal de **IA Local** de baixíssima latência. Ele prioriza a privacidade e a autonomia rodando o modelo `llama3.1` via Ollama diretamente no hardware do usuário. Ele oferece controle profundo do sistema operacional Windows, persistência de memória em Markdown (Cofre Obsidian) via protocolo MCP, e uma interface gráfica fluida acoplada em React/PyWebView.
 
 ---
 
-## 🏗️ Organização do Sistema
+## 📚 Documentação Granular por Feature
 
-O backend é dividido em três núcleos principais que se comunicam através do `main.py`:
+Para garantir a fácil manutenção e escalabilidade do backend, cada módulo principal possui sua própria documentação detalhada na pasta `docs/`. Recomendamos fortemente a leitura dos arquivos abaixo antes de alterar a arquitetura:
 
-### 1. `core/` (A Infraestrutura)
+### 🧩 Orquestração e Core
+- [O Orquestrador Principal (`main.py`)](docs/main_orchestrator.md)
+- [A Ponte PyWebView (`bridge.py`)](docs/core/bridge.md)
+- [Configurações Globais (`config.py`)](docs/core/config.md)
+- [Motor de Telemetria (`SystemInfo.py`)](docs/core/SystemInfo.md)
+- [Integração Obsidian e MCP (`obsidian.py`)](docs/core/obsidian.md)
+- [Motor de Persistência SQLite (`database.py`)](docs/core/database.md)
+- [Sistema de Observabilidade (`logger.py`)](docs/core/logger.md)
+- [Carregador Dinâmico de Skills (`skill_loader.py`)](docs/core/skill_loader.md)
+- `llm.py` — wrapper de chamadas ao Ollama (streaming e síncrono)
+- `hardware.py` — varredura via PowerShell e persistência de specs no SQLite
+- `state.py` — container de estado global em runtime (`sys_monitor`, `pending_critical_action`)
+- `prompts.py` — carregamento e substituição de variáveis em templates `.md`
+- `alerts.py` — processamento de alertas de sistema com cache de julgamento de processos
 
-É o alicerce do sistema. Responsável por:
+### 🧠 Serviços (Sentidos e Cognição)
+- [O Cérebro Cognitivo (`brain.py`)](docs/services/brain.md)
+- [Ouvidos e Transcrição (`listen.py`)](docs/services/listen.md)
+- [Voz e Sincronia (`speak.py`)](docs/services/speak.md)
+- `intent.py` — classificação de intenção via LLM (JSON mode) e verificação de skill habilitada
+- `chat.py` — montagem de prompt com histórico, contexto de vault e injeção de telemetria live
+- `memory.py` — extração de fatos de falas do usuário e gravação no Obsidian vault
 
-* **Configurações (`config.py`):** Gestão de variáveis de ambiente, caminhos e verificação de saúde do sistema.
-* **Logs (`logger.py`):** Sistema de observabilidade que monitora eventos em tempo real no terminal e em arquivo.
-* **Hardware (`SystemInfo.py`):** Sensores que permitem à IA saber o status de CPU, GPU e RAM.
-
-### 2. `services/` (Os Sentidos e a Mente)
-
-Contém a lógica de interação direta com o usuário:
-
-* **`brain.py`:** O cérebro que utiliza o **Ollama** para processar intenções.
-* **`listen.py`:** Transcrição de áudio para texto (STT) com sistema de *Wake Word*.
-* **`speak.py`:** Síntese de voz (TTS) neural para uma resposta humanizada.
-
-### 3. `database/` (A Memória)
-
-Gerencia a persistência utilizando SQLite:
-
-* **Memória Semântica:** Salva preferências (ex: nome do usuário).
-* **Memória Episódica:** Mantém o histórico completo de interações para contexto futuro.
-
----
-
-## ⚙️ O Arquivo `main.py` (O Orquestrador)
-
-O `main.py` funciona como a **Unidade Central de Processamento** do software. Ele não executa a lógica de IA ou áudio diretamente, mas coordena como os módulos conversam entre si.
-
-**Fluxo de Execução:**
-
-1. **Boot:** Carrega as configurações do `core` e valida se as pastas e o banco de dados existem.
-2. **Interface:** Inicia uma janela `pywebview` (Frontend) e estabelece uma ponte de comunicação entre Python e JavaScript.
-3. **Loop Infinito (`jarvis_auto_loop`):**
-
-* Aciona o `listen()` para capturar comandos.
-* Registra a entrada do usuário no banco de dados.
-* Envia o texto para o `brain.py` processar.
-* Atualiza o estado visual da UI (Ouvindo/Processando/Falando).
-* Aciona o `speak()` para dar o feedback sonoro.
-
-4.**Shutdown:** Gerencia o encerramento seguro de threads e processos.
+### 🚀 Skills Dinâmicas
+O J.A.R.V.I.S. suporta *Skills* Plug-and-Play. Adicionar um novo arquivo `.py` com o contrato correto em `skills/` fará o J.A.R.V.I.S aprender a habilidade no próximo boot.
+- **Automação:**
+  - [Controle de Aplicativos (`app_control.py`)](docs/skills/automation/app_control.md)
+  - [Controle de Áudio (`audio_control.py`)](docs/skills/automation/audio_control.md)
+  - [Controle de Teclado Fantasma (`keyboard_control.py`)](docs/skills/automation/keyboard_control.md)
+  - [Controle de Tela e Retina (`screen_control.py`)](docs/skills/automation/screen_control.md)
+  - [Macros de Ambiente (`work_macros.py`)](docs/skills/automation/work_macros.md)
+- **Sistema:**
+  - [Relatório de Status (`status_report.py`)](docs/skills/system/status_report.md)
+  - [Limpeza de Sistema (`system_clear.py`)](docs/skills/system/system_clear.md)
+  - [Segurança Física (`system_security.py`)](docs/skills/system/system_security.md)
 
 ---
 
-## 📦 O Arquivo `requirements.txt`
+## 🏗️ Resumo da Arquitetura
 
-Este arquivo lista todas as dependências necessárias para que o ecossistema Python funcione. Sem ele, os módulos não conseguem importar as bibliotecas de terceiros.
+O backend é dividido em três blocos operacionais:
 
-| Categoria | Biblioteca Principal | Utilidade |
-| --- | --- | --- |
-| **IA/LLM** | `ollama` | Interface com o modelo Llama 3.1 local. |
-| **Áudio** | `SpeechRecognition`, `edge-tts` | Conversão de fala em texto e vice-versa. |
-| **Hardware** | `psutil`, `GPUtil` | Coleta de dados de telemetria do PC. |
-| **Interface** | `pywebview` | Renderiza o frontend moderno sobre o código Python. |
-| **Utilitários** | `python-dotenv`, `colorama` | Gestão de segredos e estilização do terminal. |
+1. **`core/` (A Fundição)**: Singletons e infraestrutura de baixo nível — SQLite, Ollama LLM, Monitoramento de CPU/GPU, Logging, MCP Client, Webview Bridge, sistema de alertas e carregamento de prompts.
+2. **`services/` (Os Sentidos e a Mente)**: Pipeline de processamento de comandos. `listen.py` capta áudio → `brain.py` coordena → `intent.py` classifica a intenção via LLM (JSON mode) → roteia para skill, `chat.py` (resposta LLM), ou `memory.py` (gravação no vault) → `speak.py` sintetiza em áudio com efeito "Typewriter" no terminal.
+3. **`skills/` (Os Membros)**: Comandos plug-and-play. Cada arquivo com contrato `INTENT + execute()` é carregado automaticamente no boot e mapeado para o roteador de intenção.
 
 ---
 
-## 🚀 Como Executar
+## 🚀 Como Executar Localmente (Standalone)
 
-1. Certifique-se de ter o **Ollama** instalado e o modelo `llama3.1` baixado.
-2. Instale as dependências:
+1. Certifique-se de ter o **Ollama** instalado e o modelo `llama3.1` (ou o definido no `.env`) baixado.
+2. Certifique-se de que o **uvx** (Astral UV) está instalado globalmente para o servidor MCP funcionar (`pip install uv`).
+3. Instale as dependências Python:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Configure o arquivo `.env` na raiz (se necessário).
-4. Inicie o sistema:
+4. Configure o arquivo `.env` na raiz (Caminhos de Banco de Dados, Obsidian Vault, etc).
+5. Inicie o sistema:
 
 ```bash
 python main.py

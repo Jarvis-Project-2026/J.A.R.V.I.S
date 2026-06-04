@@ -6,36 +6,18 @@ import json
 import requests
 import threading
 import time
-from core import log, db
+from core import log
 from core.config import settings
+from core.prompts import load_prompt
+
+_state = {"awaiting_power_down": False}
 
 # --- CONFIGURAÇÃO DA SKILL ---
 INTENT = "SYSTEM_SECURITY"
-PROMPT_TEXT = """- SYSTEM_SECURITY: Protocolos de desligamento (Power Down), bloqueio (Modo Sentinela) e suspensão.
-  Use quando: Usuário quiser desligar o PC, proteger a estação, sair (AFK), bloquear tela ou suspender."""
+PROMPT_TEXT = load_prompt("skills/system_security.md")
 
 # --- CÉREBRO ESPECÍFICO DA SKILL ---
-SECURITY_DECISION_PROMPT = """
-Você é o Oficial de Segurança Física do J.A.R.V.I.S.
-Sua função é gerenciar os protocolos de energia e acesso do terminal host.
-
-Protocolo "Power Down" (Desenergizar o Núcleo):
-Encerramento total com limpeza. Exige confirmação.
-
-Protocolo "Sentry Mode" (Modo Sentinela/Proteger Estação):
-Bloqueio de estação imersivo. Deve ser usado quando o usuário diz "vou sair", "proteger estação", "modo sentinela", "bloquear tudo".
-
-SAÍDA: JSON estrito.
-{
-  "action": "suspend" | "power_down" | "sentry_mode",
-  "confirmed": true | false
-}
-
-Regras:
-1. "sentry_mode": Comandos imersivos de proteção ("Proteger estação", "Ativar sentinela", "Vou sair, proteja tudo").
-2. "power_down": Desligar/Encerrar ("desligar", "encerrar", "desligar o computador", "encerrar por hoje"). Confirmação necessária se não for imperativo.
-3. "suspend": Modo de espera.
-"""
+SECURITY_DECISION_PROMPT = load_prompt("skills/system_security_decision.md")
 
 # --- FUNÇÃO LOCAL DE LLM ---
 def _ask_ollama_security(user_text):
@@ -123,15 +105,21 @@ def suspend_system():
         log.error(f"Erro ao suspender: {e}")
         return "Não consegui suspender o sistema via comando."
 
+def lock_workstation():
+    """Bloqueia a estação de trabalho imediatamente sem parar a mídia."""
+    ctypes.windll.user32.LockWorkStation()
+    log.info("🔒 Estação bloqueada.")
+    return "Estação bloqueada, senhor."
+
 def power_down_protocol(is_confirmed=False):
     """Protocolo Robusto de Desligamento: Limpeza -> Despedida -> Shutdown."""
     
     if not is_confirmed:
-        db.save_memory("awaiting_power_down", "True")
+        _state["awaiting_power_down"] = True
         return "⚠️ O Protocolo de Desenergização do Núcleo é irreversível. Deseja realmente prosseguir com o encerramento total?"
 
     log.warning("🚀 [SECURITY] INICIANDO PROTOCOLO: DESENERGIZAR O NÚCLEO")
-    db.save_memory("awaiting_power_down", "False")
+    _state["awaiting_power_down"] = False
 
     log.info("🧹 [SECURITY] Limpando detritos e arquivos temporários...")
     _empty_recycle_bin()
@@ -146,14 +134,14 @@ def power_down_protocol(is_confirmed=False):
 def execute(entity, command):
     log.info(f"🛡️ [SECURITY] Analisando comando: '{command}'")
 
-    pending_confirmation = db.get_memory("awaiting_power_down") == "True"
+    pending_confirmation = _state["awaiting_power_down"]
     cmd_lower = command.lower()
 
     if pending_confirmation:
         if any(confirm in cmd_lower for confirm in ["sim", "pode", "prossiga", "confirmar", "go", "afirmativo"]):
             return power_down_protocol(is_confirmed=True)
         elif any(neg in cmd_lower for neg in ["não", "cancela", "pare", "aborta"]):
-            db.save_memory("awaiting_power_down", "False")
+            _state["awaiting_power_down"] = False
             return "Protocolo de desenergização abortado pelo usuário. Sistemas mantidos online."
 
     ai_response = _ask_ollama_security(command)

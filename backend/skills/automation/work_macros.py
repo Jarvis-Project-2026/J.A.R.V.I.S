@@ -6,28 +6,14 @@ import subprocess
 import ctypes
 from core import log
 from core.config import settings
+from core.prompts import load_prompt
 
 # --- CONFIGURAÇÃO DA SKILL ---
 INTENT = "WORK_MACRO"
-PROMPT_TEXT = """- WORK_MACRO: Ativar cenas, ambientes ou macros de trabalho/estudo.
-  Use quando: O usuário pedir para ativar um 'modo' (ex: Modo Code, Modo Gamer, Modo Estudo) ou preparar o ambiente."""
+PROMPT_TEXT = load_prompt("skills/work_macros.md")
 
 # --- CÉREBRO ESPECÍFICO DA SKILL (MACRO EXPERT) ---
-MACRO_DECISION_PROMPT = """
-Você é o Arquiteto de Ambientes do J.A.R.V.I.S.
-Sua tarefa é identificar qual MODO o usuário deseja ativar.
-
-MODOS DISPONÍVEIS:
-1. "code": Para codificação, desenvolvimento, programação, dev.
-2. "estudo": Para leitura, faculdade, cursos, pesquisa.
-3. "gamer": Para jogos, steam, entretenimento, game.
-
-SAÍDA: JSON estrito.
-{
-  "mode": "code" | "estudo" | "gamer" | "outro",
-  "reason": "breve explicação"
-}
-"""
+MACRO_DECISION_PROMPT = load_prompt("skills/work_macro_decision.md")
 
 # --- DEFINIÇÃO DAS CENAS ---
 SCENES = {

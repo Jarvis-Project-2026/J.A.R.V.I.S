@@ -4,51 +4,18 @@ import requests
 import time
 import subprocess
 import ctypes
-from core import log, db
+from core import log
 from core.config import settings
+from core.prompts import load_prompt
+
+_state = {"pending_keyboard_action": None}
 
 # --- CONFIGURAÇÃO DA SKILL ---
 INTENT = "KEYBOARD_CONTROL"
-PROMPT_TEXT = """- KEYBOARD_CONTROL: Pressionar atalhos ou teclas específicas.
-  Use quando: Usuário pedir para copiar, colar, salvar, mudar janela, dar alt-tab, printar, etc."""
+PROMPT_TEXT = load_prompt("skills/keyboard_control.md")
 
 # --- CÉREBRO ESPECÍFICO (KEYBOARD EXPERT) ---
-KEYBOARD_EXPERT_PROMPT = """
-Você é o Driver de Teclado do J.A.R.V.I.S.
-Sua única função é traduzir comandos de voz em combinações de teclas (Hotkeys) para Windows.
-
-SAÍDA: JSON estrito.
-{
-  "action": "hotkey" | "write" | "press" | "sequence",
-  "keys": ["lista", "de", "teclas"],
-  "text": "texto para digitar",
-  "steps": [lista de objetos com a mesma estrutura para sequências],
-  "is_dangerous": true | false,
-  "description": "breve descrição do efeito"
-}
-
-REGRAS DE COMBOS:
-- Use "sequence" para múltiplos passos.
-- Ex: "Limpar tudo" -> {"action": "sequence", "steps": [{"action": "hotkey", "keys": ["ctrl", "a"]}, {"action": "press", "keys": ["delete"]}], "description": "apagar todo o conteúdo"}
-- Ex: "Salvar e fechar" -> {"action": "sequence", "steps": [{"action": "hotkey", "keys": ["ctrl", "s"]}, {"action": "hotkey", "keys": ["alt", "f4"]}], "description": "salvar e encerrar o app"}
-
-REGRAS DE TECLAS (PyAutoGUI):
-- Modificadores: 'ctrl', 'shift', 'alt', 'win'
-- Comuns: 'enter', 'esc', 'tab', 'backspace', 'delete', 'space', 'up', 'down', 'left', 'right'
-- Função: 'f1' até 'f12'
-- Outros: 'home', 'end', 'pageup', 'pagedown', 'printscreen'
-
-EXEMPLOS:
-"Copia isso" -> {"action": "hotkey", "keys": ["ctrl", "c"]}
-"Cola aí" -> {"action": "hotkey", "keys": ["ctrl", "v"]}
-"Abre o gerenciador de tarefas" -> {"action": "hotkey", "keys": ["ctrl", "shift", "esc"]}
-"Muda de janela" -> {"action": "hotkey", "keys": ["alt", "tab"]}
-"Fecha essa janela" -> {"action": "hotkey", "keys": ["alt", "f4"]}
-"Escreve Olá Mundo" -> {"action": "write", "keys": [], "text": "Olá Mundo"}
-"Dá um enter" -> {"action": "press", "keys": ["enter"]}
-"Printa a tela" -> {"action": "hotkey", "keys": ["shift", "win", "s"]}
-"Janela anônima" -> {"action": "hotkey", "keys": ["ctrl", "shift", "n"]}
-"""
+KEYBOARD_EXPERT_PROMPT = load_prompt("skills/keyboard_expert.md")
 
 # Configuração de segurança do PyAutoGUI
 pyautogui.FAILSAFE = True  # Move mouse para o canto superior esquerdo para abortar
@@ -100,18 +67,18 @@ def execute(entity, command_text):
         return "Nenhum comando de teclado detectado."
 
     # 0. Verificação de Confirmação Pendente
-    pending_data = db.get_memory("pending_keyboard_action")
+    pending_data = _state["pending_keyboard_action"]
     if pending_data:
         cmd_lower = command_text.lower()
         # Se for uma confirmação positiva
         if any(confirm in cmd_lower for confirm in ["sim", "pode", "prossiga", "confirmar", "afirmativo", "faz isso"]):
             decision = json.loads(pending_data)
-            db.save_memory("pending_keyboard_action", None) # Limpa
+            _state["pending_keyboard_action"] = None
             return _perform_action(decision)
-        
+
         # Se for negativa ou outra coisa
         if any(neg in cmd_lower for neg in ["não", "cancela", "pare", "aborta", "esquece"]):
-            db.save_memory("pending_keyboard_action", None)
+            _state["pending_keyboard_action"] = None
             return "Comando cancelado. Integridade do ambiente mantida, senhor."
 
     # 1. Consulta o especialista
@@ -126,7 +93,7 @@ def execute(entity, command_text):
 
         # 2. Gatilho de Segurança
         if is_dangerous:
-            db.save_memory("pending_keyboard_action", json.dumps(decision))
+            _state["pending_keyboard_action"] = json.dumps(decision)
             return f"⚠️ Atenção, senhor. O comando solicitado irá {desc}. Deseja realmente prosseguir?"
 
         # 3. Execução Normal
