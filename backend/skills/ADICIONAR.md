@@ -177,7 +177,3 @@ Use os checkboxes para marcar o que já foi implementado e visualizar claramente
 * [ ] **Microcontroladores** — Integração com Arduino/ESP32
 * [ ] **Impressão 3D / CNC** — Monitoramento de fabricação
 * [ ] **Protocolo de Boas-Vindas** — Automação completa de chegada
-
----
-
-🛠️ **Dica:** use este checklist como roadmap vivo. Conforme o projeto evoluir, marque as etapas concluídas e priorize os próximos blocos.
