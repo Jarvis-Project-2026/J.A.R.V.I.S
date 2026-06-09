@@ -26,7 +26,7 @@ class SystemInfo:
         self.thresholds = {
             'cpu_max': 90.0,
             'ram_max': 90.0,
-            'gpu_temp_max': 75.0,
+            'gpu_temp_max': 85.0,
             'disk_space_min': 10.0,
             'disk_min_gb_warning': 20.0,
             'disk_min_gb_critical': 10.0,
@@ -448,7 +448,9 @@ class SystemInfo:
                     # GPU Check
                     if is_gpu_hot:
                         if (now - self.last_alert_time['gpu'] > self.REMINDER_COOLDOWN):
-                            warnings.append(f"GPU superaquecendo a {gpu['temp']}°C")
+                            top_procs = self.get_top_processes('cpu', limit=1)
+                            culprit_txt = f" (Top 5: {top_procs[0]})" if top_procs else ""
+                            warnings.append(f"GPU superaquecendo a {gpu['temp']}°C{culprit_txt}")
                             self.last_alert_time['gpu'] = now
 
                     # Disk Check

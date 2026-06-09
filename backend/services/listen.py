@@ -10,8 +10,14 @@ class Ear:
         self.microphone = sr.Microphone(device_index=settings.MIC_INDEX)
         
         # Configurações de Sensibilidade
-        self.recognizer.dynamic_energy_threshold = True 
-        self.recognizer.pause_threshold = 1.5 
+        # Threshold estático evita que o ruído de ventilador eleve o limiar e o mic
+        # pare de ouvir. Se MIC_ENERGY_THRESHOLD <= 0, volta ao modo dinâmico.
+        if settings.MIC_ENERGY_THRESHOLD > 0:
+            self.recognizer.dynamic_energy_threshold = False
+            self.recognizer.energy_threshold = settings.MIC_ENERGY_THRESHOLD
+        else:
+            self.recognizer.dynamic_energy_threshold = True
+        self.recognizer.pause_threshold = 1.5
         
         # Configurações de Estado
         self.WAKE_WORDS = ['jarvis', 'jar', 'jair', 'javis', 'davis', 'gervis', 'jarbas', 'garvis', 'jefferson', 'jorge', 'jair vis']

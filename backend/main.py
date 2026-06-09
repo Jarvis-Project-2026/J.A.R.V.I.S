@@ -18,6 +18,7 @@ try:
     from services.speak import speak
     from services.brain import execute_command
     from core.alerts import process_system_alert
+    from core.llm import warm_up_ollama
     from core.state import sys_monitor
     log.info("Serviços cognitivos carregados com sucesso.")
 except ImportError as e:
@@ -68,6 +69,7 @@ def jarvis_auto_loop():
     log.info(f"Interface Gráfica Conectada. Loop principal ativo.")
     sys_monitor.brain_callback = ui_aware_alert_callback
     sys_monitor.start_proactive_monitor(interval=3)  # Verificações a cada 3 segundos
+    api.start_telemetry_stream(settings.TELEMETRY_INTERVAL)  # Push delta-gated p/ a UI
 
     while is_running:
         try:
@@ -161,6 +163,11 @@ def start_jarvis():
     )
 
     api.set_window(window_instance)
+
+    # Warm-up do Ollama em paralelo à renderização da UI (esconde a latência do
+    # 1º comando; com keep_alive=-1 o modelo fica residente na VRAM).
+    threading.Thread(target=warm_up_ollama, daemon=True).start()
+
     t = threading.Thread(target=jarvis_auto_loop, daemon=True)
     t.start()
 

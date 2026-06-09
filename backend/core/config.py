@@ -34,6 +34,11 @@ class Settings:
     # Agora o modelo é controlado por aqui. Se mudar no .env, muda no cérebro todo.
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL")
     OLLAMA_HOST: str = os.getenv("OLLAMA_HOST")
+    # keep_alive do modelo na VRAM. -1 = nunca descarrega (resposta sempre rápida,
+    # mas ocupa VRAM enquanto o JARVIS roda). Aceita também duração ("30m").
+    # Numérico vira int (a API trata "30m" como duração, mas "-1" precisa ser int).
+    _KEEP_ALIVE_RAW = os.getenv("OLLAMA_KEEP_ALIVE", "-1")
+    OLLAMA_KEEP_ALIVE = int(_KEEP_ALIVE_RAW) if _KEEP_ALIVE_RAW.lstrip("-").isdigit() else _KEEP_ALIVE_RAW
 
     # --- Configurações do Obsidian (Memória de Longo Prazo) ---
     OBSIDIAN_HOST: str = os.getenv("OBSIDIAN_HOST")
@@ -43,10 +48,24 @@ class Settings:
     TIMEOUT_API: int = 10  # Segundos para esperar a IA responder
     TIMEOUT_VOICE: int = 5 # Segundos para esperar o reconhecimento de voz
 
+    # --- Cache de Classificação de Intenção (LRU + TTL) ---
+    # Repetir o mesmo comando em <TTL s serve do cache, sem nova ida ao Ollama.
+    INTENT_CACHE_TTL: int = 30   # Segundos de validade de cada entrada
+    INTENT_CACHE_SIZE: int = 64  # Máximo de entradas antes da evicção LRU
+
+    # --- Telemetria Push (Backend -> UI por delta, sem polling) ---
+    TELEMETRY_INTERVAL: float = 1.0   # Frequência de amostragem do loop (s)
+    TELEMETRY_CPU_DELTA: float = 5.0  # Push se |ΔCPU%| > este valor
+    TELEMETRY_RAM_DELTA: float = 2.0  # Push se |ΔRAM%| > este valor
+    TELEMETRY_GPU_DELTA: float = 5.0  # Push se |ΔGPU load%| > este valor
+
     # --- Configurações de Áudio (Listen/Speak) ---
     DEFAULT_LANGUAGE: str = "pt-BR"
     SPEECH_RATE: int = int(os.getenv("SPEECH_RATE"))    # Velocidade da fala
     MIC_INDEX: int = int(os.getenv("MIC_INDEX")) # Índice do microfone padrão
+    # Threshold de energia estático. >0 desliga o dynamic_energy_threshold (instável
+    # com ruído de ventilador). 0 mantém o modo dinâmico automático.
+    MIC_ENERGY_THRESHOLD: int = int(os.getenv("MIC_ENERGY_THRESHOLD", "300"))
 
     # --- Configurações do Banco de Dados ---
     DB_NAME: str = "jarvis_memory.db"

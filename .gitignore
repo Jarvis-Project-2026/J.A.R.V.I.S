@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+# Posts do Linkedin
+Post_Linkedin/*.txt
+
 # Distribution / packaging
 .Python
 build/
@@ -210,3 +213,8 @@ __marimo__/
 
 # Assets
 backend/assets/
+
+# CLAUDE and Docs
+CLAUDE.md
+Post_Linkedin/
+.claude/
