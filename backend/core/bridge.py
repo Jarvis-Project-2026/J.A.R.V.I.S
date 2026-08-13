@@ -1,6 +1,10 @@
 import webview
 import json
+import time
+import threading
+from .config import settings
 from .logger import log
+from .utils import escape_js
 
 class JarvisAPI:
     """
@@ -13,6 +17,8 @@ class JarvisAPI:
         self._window = None
         self._is_maximized = True
         self.boot_greeting_fn = None  # set by main.py after init
+        self._telemetry_streaming = False
+        self._last_telemetry = None  # {cpu, ram, gpu} do último push (delta gate)
 
     def set_window(self, window):
         """Referência da janela para comandos e notificações push"""
@@ -59,6 +65,46 @@ class JarvisAPI:
             log.error(f"Erro na ponte de telemetria: {e}")
             return None
 
+    # --- TELEMETRIA PUSH (delta-gated, substitui o polling de 1s do frontend) ---
+    def start_telemetry_stream(self, interval=None):
+        """Inicia o loop que empurra telemetria à UI apenas quando há mudança
+        relevante. Idempotente (não sobe dois loops)."""
+        if self._telemetry_streaming:
+            return
+        self._telemetry_streaming = True
+        interval = interval or settings.TELEMETRY_INTERVAL
+        threading.Thread(target=self._telemetry_loop, args=(interval,), daemon=True).start()
+        log.info(f"📡 Stream de telemetria push iniciado ({interval}s, delta-gated)")
+
+    def _should_push(self, cpu, ram, gpu):
+        """True se 1º envio ou se algum sensor cruzou seu threshold de delta."""
+        last = self._last_telemetry
+        if last is None:
+            return True
+        return (
+            abs(cpu - last["cpu"]) > settings.TELEMETRY_CPU_DELTA
+            or abs(ram - last["ram"]) > settings.TELEMETRY_RAM_DELTA
+            or abs(gpu - last["gpu"]) > settings.TELEMETRY_GPU_DELTA
+        )
+
+    def _telemetry_loop(self, interval):
+        while self._telemetry_streaming:
+            try:
+                data = self.get_telemetry()
+                if data and self._window:
+                    cpu = data["cpu"].get("usage", 0) or 0
+                    ram = data["ram"].get("percent", 0) or 0
+                    gpu = data["gpu"].get("load", 0) or 0
+                    if self._should_push(cpu, ram, gpu):
+                        self._last_telemetry = {"cpu": cpu, "ram": ram, "gpu": gpu}
+                        # JSON válido é expressão JS válida — sem escape manual de string.
+                        payload = json.dumps(data)
+                        js = f"if(window.receiveTelemetry){{window.receiveTelemetry({payload})}}"
+                        self._window.evaluate_js(js)
+            except Exception as e:
+                log.error(f"Erro no loop de telemetria push: {e}")
+            time.sleep(interval)
+
     # --- NOTIFICAÇÃO PROATIVA (BACKEND -> UI) ---
     def send_frontend_alert(self, level, message):
         """
@@ -67,9 +113,11 @@ class JarvisAPI:
         """
         if self._window:
             # Dispara um CustomEvent no JavaScript
+            safe_level = escape_js(level)
+            safe_message = escape_js(message)
             js_code = f"""
-            window.dispatchEvent(new CustomEvent('JARVIS_SYS_ALERT', {{ 
-                detail: {{ level: '{level}', message: '{message}' }} 
+            window.dispatchEvent(new CustomEvent('JARVIS_SYS_ALERT', {{
+                detail: {{ level: '{safe_level}', message: '{safe_message}' }}
             }}));
             """
             self._window.evaluate_js(js_code)
@@ -229,7 +277,7 @@ class JarvisAPI:
                     
                     if self._window:
                         # Escapa caracteres especiais para a avaliação JS segura
-                        safe_chunk = chunk.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"').replace("\n", "\\n")
+                        safe_chunk = escape_js(chunk)
                         
                         # Dispara evento com chunk atual e indicação se é o primeiro chunk
                         js_code = f"if(window.receiveChatStream) {{ window.receiveChatStream('{safe_chunk}', {'true' if is_first else 'false'}, false); }}"

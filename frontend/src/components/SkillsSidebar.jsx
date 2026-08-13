@@ -1,11 +1,22 @@
 /* eslint-disable */
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Zap, Settings, Home, Calendar, Globe, ChevronRight } from "lucide-react";
+import {
+  Zap,
+  Settings,
+  Home,
+  Calendar,
+  Globe,
+  ChevronRight,
+} from "lucide-react";
 import useBridgeAPI from "../hooks/BridgeAPI";
 
 const getCategoryIcon = (categoryId) => {
-  const props = { size: 14, className: "opacity-80 group-hover:scale-110 transition-transform text-cyan-400 shrink-0" };
+  const props = {
+    size: 14,
+    className:
+      "opacity-80 group-hover:scale-110 transition-transform text-cyan-400 shrink-0",
+  };
   switch (categoryId) {
     case "automation":
       return <Zap {...props} />;
@@ -43,13 +54,13 @@ export default function SkillsSidebar({ isCritical }) {
         setCategories([]);
       }
     };
-    
+
     // Tenta carregar imediatamente
     fetchSkills();
 
     // Registra o ouvinte para quando a ponte pywebview estiver pronta
     window.addEventListener("pywebviewready", fetchSkills);
-    
+
     // Recarrega sempre que a aba for aberta para garantir atualização em tempo real
     if (isOpen) {
       fetchSkills();
@@ -60,13 +71,12 @@ export default function SkillsSidebar({ isCritical }) {
     };
   }, [isOpen]);
 
-
   const toggleSidebar = () => setIsOpen(!isOpen);
 
   // Liga/Desliga Categoria Completa (Lote/Grupo)
   const handleToggleCategory = async (e, categoryId, currentEnabled) => {
     e.stopPropagation(); // Evita expandir a sanfona ao clicar no switch
-    
+
     // Atualização local imediata para feedback visual e de mola fluido
     setCategories((prev) =>
       prev.map((cat) =>
@@ -77,17 +87,20 @@ export default function SkillsSidebar({ isCritical }) {
               skills: cat.skills.map((s) => ({
                 ...s,
                 categoryEnabled: !currentEnabled,
-                enabled: !currentEnabled
-              }))
+                enabled: !currentEnabled,
+              })),
             }
-          : cat
-      )
+          : cat,
+      ),
     );
 
     try {
       await callApi("toggle_category", categoryId, !currentEnabled);
     } catch (err) {
-      console.error(`Erro ao alternar ativação da categoria ${categoryId}:`, err);
+      console.error(
+        `Erro ao alternar ativação da categoria ${categoryId}:`,
+        err,
+      );
     }
   };
 
@@ -101,11 +114,11 @@ export default function SkillsSidebar({ isCritical }) {
           ? {
               ...cat,
               skills: cat.skills.map((s) =>
-                s.id === skillId ? { ...s, enabled: !currentEnabled } : s
-              )
+                s.id === skillId ? { ...s, enabled: !currentEnabled } : s,
+              ),
             }
-          : cat
-      )
+          : cat,
+      ),
     );
 
     try {
@@ -154,11 +167,15 @@ export default function SkillsSidebar({ isCritical }) {
         className="fixed right-6 top-1/2 -translate-y-1/2 z-[60] w-10 h-24 flex items-center justify-center liquid-glass cursor-pointer pointer-events-auto group"
       >
         <div className="flex flex-col gap-1 items-center select-none">
-          <div className={`w-1 h-1 rounded-full ${isOpen ? 'bg-cyan-400' : 'bg-white/40'} transition-colors`} />
+          <div
+            className={`w-1 h-1 rounded-full ${isOpen ? "bg-cyan-400" : "bg-white/40"} transition-colors`}
+          />
           <span className="[writing-mode:vertical-lr] text-[9px] font-bold tracking-[0.25em] uppercase text-white/60 group-hover:text-cyan-300 transition-colors">
-            {isOpen ? 'Close' : 'Skills'}
+            {isOpen ? "Close" : "Actions"}
           </span>
-          <div className={`w-1 h-1 rounded-full ${isOpen ? 'bg-cyan-400' : 'bg-white/40'} transition-colors`} />
+          <div
+            className={`w-1 h-1 rounded-full ${isOpen ? "bg-cyan-400" : "bg-white/40"} transition-colors`}
+          />
         </div>
       </motion.button>
 
@@ -172,7 +189,7 @@ export default function SkillsSidebar({ isCritical }) {
             transition={{ type: "spring", stiffness: 120, damping: 22 }}
             className="fixed right-0 top-0 bottom-0 w-80 z-[55] p-8 pt-24 pointer-events-auto flex flex-col justify-between"
           >
-            <div 
+            <div
               style={{
                 background: theme.bg,
                 backdropFilter: "blur(40px) saturate(150%)",
@@ -185,7 +202,9 @@ export default function SkillsSidebar({ isCritical }) {
 
             <div className="flex flex-col gap-6 flex-1 overflow-hidden">
               <header className="flex flex-col gap-1 select-none">
-                <h2 className="text-xl font-bold tracking-tight text-white/90">Neural Skills</h2>
+                <h2 className="text-xl font-bold tracking-tight text-white/90">
+                  Neural Actions
+                </h2>
                 <p className="text-[10px] uppercase tracking-widest text-cyan-400 font-semibold opacity-60">
                   Subsystem Toggles
                 </p>
@@ -194,41 +213,57 @@ export default function SkillsSidebar({ isCritical }) {
               {/* Lista Dinâmica de Categorias e Toggles */}
               <nav className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3.5 scrollbar-thin">
                 {categories.map((cat) => (
-                  <div key={cat.id} className={`flex flex-col rounded-2xl border ${theme.border} bg-white/[0.01] overflow-hidden`}>
-                    
+                  <div
+                    key={cat.id}
+                    className={`flex flex-col rounded-2xl border ${theme.border} bg-white/[0.01] overflow-hidden`}
+                  >
                     {/* Botão de Categoria Principal com Toggle Switch Integrado */}
                     <div
-                      onClick={() => setExpandedCategory(expandedCategory === cat.id ? null : cat.id)}
+                      onClick={() =>
+                        setExpandedCategory(
+                          expandedCategory === cat.id ? null : cat.id,
+                        )
+                      }
                       className={`flex items-center justify-between p-4 transition-all duration-300 group hover:bg-white/[0.03] cursor-pointer`}
                     >
                       <div className="flex items-center gap-3">
                         {getCategoryIcon(cat.id)}
-                        <span className={`text-xs font-semibold tracking-wide transition-all ${cat.enabled ? "text-white" : "text-white/30"}`}>
+                        <span
+                          className={`text-xs font-semibold tracking-wide transition-all ${cat.enabled ? "text-white" : "text-white/30"}`}
+                        >
                           {cat.label}
                         </span>
                       </div>
-                      
+
                       {/* Área de Controle (Toggle Geral + Indicador de Expansão) */}
                       <div className="flex items-center gap-3.5">
                         {/* Switch de Grupo/Categoria */}
                         <button
-                          onClick={(e) => handleToggleCategory(e, cat.id, cat.enabled)}
+                          onClick={(e) =>
+                            handleToggleCategory(e, cat.id, cat.enabled)
+                          }
                           className={`w-8 h-4.5 rounded-full p-0.5 transition-colors duration-300 cursor-pointer flex items-center ${
                             cat.enabled ? theme.toggleOn : "bg-white/10"
                           }`}
                         >
                           <motion.div
                             layout
-                            transition={{ type: "spring", stiffness: 500, damping: 28 }}
+                            transition={{
+                              type: "spring",
+                              stiffness: 500,
+                              damping: 28,
+                            }}
                             className="w-3.5 h-3.5 rounded-full bg-white shadow-md"
                             style={{
                               marginLeft: cat.enabled ? "auto" : "0px",
                             }}
                           />
                         </button>
-                        
-                        <motion.span 
-                          animate={{ rotate: expandedCategory === cat.id ? 90 : 0 }}
+
+                        <motion.span
+                          animate={{
+                            rotate: expandedCategory === cat.id ? 90 : 0,
+                          }}
                           className="flex items-center justify-center w-3 h-3 text-white/20"
                         >
                           <ChevronRight size={10} />
@@ -243,13 +278,18 @@ export default function SkillsSidebar({ isCritical }) {
                           initial={{ height: 0, opacity: 0 }}
                           animate={{ height: "auto", opacity: 1 }}
                           exit={{ height: 0, opacity: 0 }}
-                          transition={{ type: "spring", stiffness: 180, damping: 20 }}
+                          transition={{
+                            type: "spring",
+                            stiffness: 180,
+                            damping: 20,
+                          }}
                           className="border-t border-white/[0.03] bg-black/10 overflow-hidden"
                         >
                           <div className="flex flex-col gap-3.5 p-4 pl-5">
                             {cat.skills.length > 0 ? (
                               cat.skills.map((skill) => {
-                                const isSkillActive = skill.enabled && skill.categoryEnabled;
+                                const isSkillActive =
+                                  skill.enabled && skill.categoryEnabled;
                                 return (
                                   <div
                                     key={skill.id}
@@ -257,35 +297,52 @@ export default function SkillsSidebar({ isCritical }) {
                                   >
                                     <div className="flex flex-col gap-0.5 select-text">
                                       <div className="flex items-center gap-1.5">
-                                        <span className={`font-bold transition-all ${isSkillActive ? "text-white/80" : "text-white/20"}`}>
+                                        <span
+                                          className={`font-bold transition-all ${isSkillActive ? "text-white/80" : "text-white/20"}`}
+                                        >
                                           {skill.name}
                                         </span>
                                         <span className="font-mono text-[7px] opacity-20 group-hover/item:opacity-40 transition-opacity">
                                           {skill.fileName}
                                         </span>
                                       </div>
-                                      <span className="text-[9px] text-white/35 leading-relaxed">{skill.desc}</span>
+                                      <span className="text-[9px] text-white/35 leading-relaxed">
+                                        {skill.desc}
+                                      </span>
                                     </div>
 
                                     {/* Toggle Switch Individual 1 a 1 */}
                                     <button
-                                      onClick={(e) => handleToggleSkill(e, skill.id, skill.enabled, cat.id)}
+                                      onClick={(e) =>
+                                        handleToggleSkill(
+                                          e,
+                                          skill.id,
+                                          skill.enabled,
+                                          cat.id,
+                                        )
+                                      }
                                       disabled={!skill.categoryEnabled} // Desabilita se a categoria estiver desligada!
                                       className={`w-7 h-4 rounded-full p-0.5 transition-colors duration-300 flex items-center mt-0.5 ${
                                         !skill.categoryEnabled
                                           ? "bg-white/5 opacity-30 cursor-not-allowed"
                                           : skill.enabled
-                                          ? theme.toggleOn
-                                          : "bg-white/10 cursor-pointer"
+                                            ? theme.toggleOn
+                                            : "bg-white/10 cursor-pointer"
                                       }`}
                                     >
                                       {skill.categoryEnabled && (
                                         <motion.div
                                           layout
-                                          transition={{ type: "spring", stiffness: 500, damping: 28 }}
+                                          transition={{
+                                            type: "spring",
+                                            stiffness: 500,
+                                            damping: 28,
+                                          }}
                                           className="w-3 h-3 rounded-full bg-white shadow-sm"
                                           style={{
-                                            marginLeft: skill.enabled ? "auto" : "0px",
+                                            marginLeft: skill.enabled
+                                              ? "auto"
+                                              : "0px",
                                           }}
                                         />
                                       )}
@@ -294,7 +351,9 @@ export default function SkillsSidebar({ isCritical }) {
                                 );
                               })
                             ) : (
-                              <span className="text-[9px] text-white/25 italic px-2">Nenhuma rotina carregada.</span>
+                              <span className="text-[9px] text-white/25 italic px-2">
+                                Nenhuma rotina carregada.
+                              </span>
                             )}
                           </div>
                         </motion.div>

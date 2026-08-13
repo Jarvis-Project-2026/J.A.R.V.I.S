@@ -3,10 +3,10 @@ import time
 import json
 import requests
 import subprocess
-import ctypes
 from core import log
 from core.config import settings
 from core.prompts import load_prompt
+from core.spotify import spotify, ensure_device_ready, start_uri
 
 # --- CONFIGURAÇÃO DA SKILL ---
 INTENT = "WORK_MACRO"
@@ -18,13 +18,15 @@ MACRO_DECISION_PROMPT = load_prompt("skills/work_macro_decision.md")
 # --- DEFINIÇÃO DAS CENAS ---
 SCENES = {
     "code": {
-        "apps": ["opera gx", "spotify", "visual studio code", "terminal"],
+        # Spotify sai da lista: _start_playlist() já lança o app via URI da playlist.
+        "apps": ["opera gx", "visual studio code", "terminal"],
         "message": "Protocolo de desenvolvimento ativado.",
         "requires_internet": True,
-        "playlist": "spotify:playlist:0XkPXLnaDEjO04Z3ZvrHIk" # Só ROCK 
+        "playlist": "spotify:playlist:0XkPXLnaDEjO04Z3ZvrHIk" # Só ROCK
     },
     "estudo": {
-        "apps": ["opera gx", "spotify"],
+        # Idem: o Spotify é aberto pelo bloco de trilha sonora.
+        "apps": ["opera gx"],
         "message": "Modo de concentração ativado.",
         "requires_internet": True,
         "playlist": "spotify:playlist:5aofQDdd0buo5bRre6yMlG" # MPB
@@ -36,6 +38,7 @@ SCENES = {
     }
 }
 
+
 def check_internet():
     """Verifica conectividade básica."""
     try:
@@ -44,28 +47,22 @@ def check_internet():
     except:
         return False
 
-def check_process_running(app_name):
+def _start_playlist(uri):
+    """Inicia a trilha sonora da cena. Nunca levanta exceção.
+
+    Caminho preferencial é a Web API (controle real do player). O `start_uri`
+    local continua como rede de segurança para quando não há autorização,
+    Premium ou dispositivo utilizável — foi o único mecanismo por muito tempo
+    e segue sendo o que funciona com o Spotify fechado e sem token.
     """
-    Verifica se um app já está rodando usando a skill APP_CONTROL se disponível,
-    ou psutil como fallback.
-    """
-    from core import manager
-    if "APP_CONTROL" in manager.skills:
-        skill = manager.skills["APP_CONTROL"]
-        # A skill APP_CONTROL tem a função find_active_processes mas ela é interna.
-        # Vamos usar psutil direto aqui para ser mais rápido ou usar a skill se fosse exposta.
-        # Como não conseguimos importar 'find_active_processes' fácil sem mexer na outra skill,
-        # vamos usar o execute com uma ação de 'check' simulada ou implementar local simples.
-        pass
-    
-    # Implementação local rápida
-    import psutil
-    for proc in psutil.process_iter(['name']):
-        try:
-            if app_name.lower() in proc.info['name'].lower():
-                return True
-        except: pass
-    return False
+    if spotify.is_authorized():
+        device_id = ensure_device_ready()
+        if spotify.play(context_uri=uri, device_id=device_id):
+            log.debug("🎧 Trilha sonora iniciada pela Web API.")
+            return True
+        log.debug("Web API não iniciou a playlist. Caindo para o app local...")
+
+    return start_uri(uri)
 
 def _ask_ollama_macro_expert(user_text):
     """Consulta o LLM para decidir qual macro ativar."""
@@ -88,13 +85,13 @@ def _ask_ollama_macro_expert(user_text):
 
 def execute_app_action(app_name, action="open"):
     """Reutiliza a skill APP_CONTROL para abrir os apps da macro."""
-    from core import manager 
-    
+    from core import manager
+
     if "APP_CONTROL" in manager.skills:
         skill = manager.skills["APP_CONTROL"]
-        
-        # Tentamos silenciar a saída do processo aberto via variável de ambiente 
-        # ou redirecionamento se a skill permitir. 
+
+        # Tentamos silenciar a saída do processo aberto via variável de ambiente
+        # ou redirecionamento se a skill permitir.
         # Por enquanto, apenas chamamos; a poluição vem geralmente do Popen sem shell=True
         return skill.execute(app_name, f"{action} {app_name}")
     return f"Não consegui acessar o subsistema de controle de apps para {app_name}."
@@ -117,7 +114,7 @@ def organize_windows(mode):
     Usa um script PowerShell robusto injetado diretamente.
     """
     log.info("📐 Calculando layout de janelas...")
-    
+
     # Script PowerShell Híbrido: C# para User32.dll + Lógica de Monitores
     ps_script = """
     Add-Type @"
@@ -138,37 +135,37 @@ def organize_windows(mode):
     $screens = [System.Windows.Forms.Screen]::AllScreens
     $monitorCount = $screens.Count
     $prim = $screens[0].WorkingArea
-    
+
     # Definição de Alvos (Process Name -> Variável)
     # Tenta pegar processos com janela visível
     $code = Get-Process -Name "Code" -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowHandle -ne 0} | Select-Object -First 1
     $browser = Get-Process -Name "opera", "chrome", "msedge" -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowHandle -ne 0} | Select-Object -First 1
     $term = Get-Process -Name "WindowsTerminal", "cmd", "powershell" -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowHandle -ne 0} | Select-Object -First 1
     $spotify = Get-Process -Name "Spotify" -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowHandle -ne 0} | Select-Object -First 1
-    
+
     # --- MODO CODE ---
     if ("%MODE%" -eq "code") {
         if ($monitorCount -eq 1) {
             # 1 Monitor: VS Code (70%), Browser (30%)
             $wCode = [math]::Floor($prim.Width * 0.70)
             $wBrowser = $prim.Width - $wCode
-            
-            if ($code) { 
+
+            if ($code) {
                 [Win32]::ShowWindow($code.MainWindowHandle, 1) # Ensure Normal State
-                [Win32]::MoveWindow($code.MainWindowHandle, $prim.Left, $prim.Top, $wCode, $prim.Height, $true) 
+                [Win32]::MoveWindow($code.MainWindowHandle, $prim.Left, $prim.Top, $wCode, $prim.Height, $true)
             }
-            if ($browser) { 
+            if ($browser) {
                 [Win32]::ShowWindow($browser.MainWindowHandle, 1)
-                [Win32]::MoveWindow($browser.MainWindowHandle, $prim.Left + $wCode, $prim.Top, $wBrowser, $prim.Height, $true) 
+                [Win32]::MoveWindow($browser.MainWindowHandle, $prim.Left + $wCode, $prim.Top, $wBrowser, $prim.Height, $true)
             }
         }
         else {
             # 2+ Monitores: VS Code (Monitor 1), Browser (Monitor 2)
             $sec = $screens[1].WorkingArea
-            
-            if ($code) { 
+
+            if ($code) {
                 [Win32]::ShowWindow($code.MainWindowHandle, 3) # Maximize
-                [Win32]::MoveWindow($code.MainWindowHandle, $prim.Left, $prim.Top, $prim.Width, $prim.Height, $true) 
+                [Win32]::MoveWindow($code.MainWindowHandle, $prim.Left, $prim.Top, $prim.Width, $prim.Height, $true)
             }
             if ($browser) {
                  [Win32]::ShowWindow($browser.MainWindowHandle, 1) # Normal (para mover entre telas as vezes precisa)
@@ -177,23 +174,23 @@ def organize_windows(mode):
             }
         }
     }
-    
+
     # --- MODO ESTUDO ---
     if ("%MODE%" -eq "estudo") {
          # Exemplo: Browser Esquerda (50%), Notion Direita (50%)
          # Adaptar conforme necessidade do Notion (geralmente é app web ou desktop name 'Notion')
          $notion = Get-Process -Name "Notion" -ErrorAction SilentlyContinue | Select-Object -First 1
-         
+
          $half = [math]::Floor($prim.Width * 0.5)
-         
+
          if ($browser) { [Win32]::MoveWindow($browser.MainWindowHandle, $prim.Left, $prim.Top, $half, $prim.Height, $true) }
          if ($notion) { [Win32]::MoveWindow($notion.MainWindowHandle, $prim.Left + $half, $prim.Top, $half, $prim.Height, $true) }
     }
     """
-    
+
     # Injeta o modo atual no script
     final_script = ps_script.replace("%MODE%", mode)
-    
+
     try:
         # Executa silenciosamente
         subprocess.Popen(["powershell", "-Command", final_script], shell=True)
@@ -204,7 +201,7 @@ def organize_windows(mode):
 def execute(entity, command_text=""):
     # Importação Tardia de Speak para Feedback Verbal Imediato
     from services.speak import speak
-    
+
     if not command_text:
         return "Qual protocolo de ambiente devo iniciar, senhor?"
 
@@ -221,10 +218,10 @@ def execute(entity, command_text=""):
              return "Esse perfil de ambiente ainda não consta nos meus protocolos, senhor."
 
         scene = SCENES[mode]
-        
+
         # --- FATOR IMERSÃO: Confirmação Verbal ---
         speak(f"Carregando protocolo {mode}, senhor. Ajustando ambiente.")
-        
+
         # 2. Executa as ações
         log.info(f"🎭 Ativando Cena: {mode.upper()}")
 
@@ -241,39 +238,20 @@ def execute(entity, command_text=""):
         for app in scene["apps"]:
             log.debug(f"Macros: Verificando {app}...")
             execute_app_action(app, action="open")
-            time.sleep(1.5) 
-            
+            time.sleep(1.5)
+
         # 5. FATOR IMERSÃO: Trilha Sonora
+        # Web API quando autorizado; app local como fallback.
         if "playlist" in scene:
             log.info(f"🎵 Iniciando trilha sonora: {scene['playlist']}")
-            spotify_uri = scene['playlist']
-            
-            # Remove o :play antigo se houver, pois vamos forçar via teclado
-            if spotify_uri.endswith(":play"):
-                spotify_uri = spotify_uri.replace(":play", "")
-            
-            # 1. Abre o Spotify na Playlist específica (foca a janela e carrega a lista)
-            # O comando 'start' do Windows executa a URI
-            os.system(f"start {spotify_uri}")
-            
-            # 2. Aguarda o Spotify processar (essencial para não dar play no nada)
-            # Se o PC for mais lento, aumente para 4 ou 5 segundos
-            time.sleep(3) 
-            
-            # 3. Envia o sinal de tecla "Media Play/Pause" via Windows API
-            log.debug("Enviando sinal de Play via Hardware...")
-            VK_MEDIA_PLAY_PAUSE = 0xB3
-            hwcode = ctypes.windll.user32.MapVirtualKeyA(VK_MEDIA_PLAY_PAUSE, 0)
-            
-            # Pressiona a tecla
-            ctypes.windll.user32.keybd_event(VK_MEDIA_PLAY_PAUSE, hwcode, 0, 0)
-            # Solta a tecla
-            ctypes.windll.user32.keybd_event(VK_MEDIA_PLAY_PAUSE, hwcode, 2, 0)
+            _start_playlist(scene["playlist"])
 
         # 6. Organiza as janelas
-        time.sleep(3) 
+        # Mantido em 3s: o Tiling depende do MainWindowHandle do VS Code existir,
+        # e a espera do Spotify retorna na hora quando ele já estava aberto.
+        time.sleep(3)
         organize_windows(mode)
-        
+
         return f"{scene['message']} Sistema pronto."
 
     except Exception as e:

@@ -13,6 +13,7 @@ O objetivo do J.A.R.V.I.S. é ser um assistente pessoal de **IA Local** de baix�
 Para garantir a fácil manutenção e escalabilidade do backend, cada módulo principal possui sua própria documentação detalhada na pasta `docs/`. Recomendamos fortemente a leitura dos arquivos abaixo antes de alterar a arquitetura:
 
 ### 🧩 Orquestração e Core
+
 - [O Orquestrador Principal (`main.py`)](docs/main_orchestrator.md)
 - [A Ponte PyWebView (`bridge.py`)](docs/core/bridge.md)
 - [Configurações Globais (`config.py`)](docs/core/config.md)
@@ -28,6 +29,7 @@ Para garantir a fácil manutenção e escalabilidade do backend, cada módulo pr
 - `alerts.py` — processamento de alertas de sistema com cache de julgamento de processos
 
 ### 🧠 Serviços (Sentidos e Cognição)
+
 - [O Cérebro Cognitivo (`brain.py`)](docs/services/brain.md)
 - [Ouvidos e Transcrição (`listen.py`)](docs/services/listen.md)
 - [Voz e Sincronia (`speak.py`)](docs/services/speak.md)
@@ -36,7 +38,9 @@ Para garantir a fácil manutenção e escalabilidade do backend, cada módulo pr
 - `memory.py` — extração de fatos de falas do usuário e gravação no Obsidian vault
 
 ### 🚀 Skills Dinâmicas
+
 O J.A.R.V.I.S. suporta *Skills* Plug-and-Play. Adicionar um novo arquivo `.py` com o contrato correto em `skills/` fará o J.A.R.V.I.S aprender a habilidade no próximo boot.
+
 - **Automação:**
   - [Controle de Aplicativos (`app_control.py`)](docs/skills/automation/app_control.md)
   - [Controle de Áudio (`audio_control.py`)](docs/skills/automation/audio_control.md)

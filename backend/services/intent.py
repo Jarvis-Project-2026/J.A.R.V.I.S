@@ -1,9 +1,15 @@
 import json
+from core.config import settings
 from core.llm import query_ollama
 from core.logger import log
 from core.database import db
 from core.skill_loader import manager
 from core.prompts import load_prompt
+from core.utils import TTLCache
+
+# Memoiza classificações recentes: repetir o mesmo comando em <TTL s não
+# desperdiça uma nova ida ao Ollama. Chave = (texto normalizado, skip_skills).
+_intent_cache = TTLCache(maxsize=settings.INTENT_CACHE_SIZE, ttl=settings.INTENT_CACHE_TTL)
 
 
 def is_skill_enabled(intent):
@@ -29,6 +35,13 @@ def is_skill_enabled(intent):
 
 def classify_intent(text, skip_skills=False):
     """ROTEADOR DE INTENÇÃO: Classifica o comando do usuário em categorias."""
+    # Cache LRU+TTL: comandos repetidos em sequência servem sem reconsultar o LLM.
+    cache_key = ((text or "").strip().lower(), skip_skills)
+    cached = _intent_cache.get(cache_key)
+    if cached is not None:
+        log.debug(f"⚡ [INTENÇÃO CACHE HIT]: {cached.get('intent')}")
+        return dict(cached)  # cópia: chamador nunca muta a entrada cacheada
+
     active_skills = [] if skip_skills else [intent for intent in manager.skills.keys() if is_skill_enabled(intent)]
     valid_intents = ["HARDWARE", "MEMORY_READ", "MEMORY_WRITE", "CHAT"] + active_skills
 
@@ -56,13 +69,14 @@ def classify_intent(text, skip_skills=False):
     )
 
     try:
-        res = query_ollama([{'role': 'user', 'content': prompt}], format='json', temperature=0)
+        res = query_ollama([{'role': 'user', 'content': prompt}], format='json', temperature=0, timeout=settings.TIMEOUT_API)
         if not res:
             return {"intent": "CHAT", "entity": None, "confidence": 0.0}
 
         result = json.loads(res)
         if not result.get("intent"): result["intent"] = "CHAT"
         if "confidence" not in result: result["confidence"] = 0.5
+        _intent_cache.set(cache_key, dict(result))  # guarda cópia estável
         return result
     except Exception as e:
         log.error(f"Erro no parsing do Classificador: {e}")

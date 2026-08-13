@@ -3,31 +3,40 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import TelemetryWidget from "./TELEMETRY/TelemetryWidget";
 import CpuRamWidget from "./TELEMETRY/CpuRamWidget";
-import NetworkWidget from "./TELEMETRY/NetworkWidget";
 import useBridgeAPI from "../hooks/BridgeAPI";
 
 export default function LiveTelemetry() {
   const [data, setData] = useState(null);
   const [showCpuWidget, setShowCpuWidget] = useState(true);
-  const [showNetWidget, setShowNetWidget] = useState(true);
-  const { callApi } = useBridgeAPI();
+  const { isReady, callApi } = useBridgeAPI();
 
-  // Sincroniza dados com o Python a cada 1 segundo
+  // Telemetria via PUSH: o Python chama window.receiveTelemetry só quando há
+  // mudança relevante (delta-gated), eliminando o polling de 1s.
   useEffect(() => {
-    const updateStats = async () => {
-      try {
-        const stats = await callApi("get_telemetry");
-        if (stats) {
-          setData(stats);
-        }
-      } catch (err) {
-        console.error("Erro ao buscar telemetria:", err);
-      }
+    // Bridge real → registra o ouvinte de push
+    window.receiveTelemetry = (payload) => {
+      if (payload) setData(payload);
     };
 
-    const interval = setInterval(updateStats, 1000);
-    return () => clearInterval(interval);
-  }, []);
+    // Fetch inicial único: evita widget em branco até o 1º push.
+    callApi("get_telemetry")
+      .then((stats) => stats && setData(stats))
+      .catch((err) => console.error("Erro no fetch inicial de telemetria:", err));
+
+    // Modo mock (browser dev, sem pywebview): não há push → mantém polling local.
+    let mockInterval = null;
+    if (!isReady) {
+      mockInterval = setInterval(async () => {
+        const stats = await callApi("get_telemetry");
+        if (stats) setData(stats);
+      }, 1000);
+    }
+
+    return () => {
+      delete window.receiveTelemetry;
+      if (mockInterval) clearInterval(mockInterval);
+    };
+  }, [isReady]);
 
   if (!data) return null;
 
@@ -45,19 +54,9 @@ export default function LiveTelemetry() {
             + Core Diagnostic
           </motion.button>
         )}
-        {!showNetWidget && (
-          <motion.button
-            onClick={() => setShowNetWidget(true)}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            className="px-3 py-1 rounded-full bg-black/40 border border-white/5 backdrop-blur-[10px] text-[8px] font-bold tracking-widest uppercase text-cyan-400 cursor-pointer"
-          >
-            + Network Uplink
-          </motion.button>
-        )}
       </div>
 
-      {/* 1. CORE DIAGNOSTIC WIDGET */}
+      {/* CORE DIAGNOSTIC WIDGET */}
       <AnimatePresence>
         {showCpuWidget && (
           <TelemetryWidget
@@ -66,19 +65,6 @@ export default function LiveTelemetry() {
             positionClasses="bottom-10 left-10"
           >
             <CpuRamWidget data={data} />
-          </TelemetryWidget>
-        )}
-      </AnimatePresence>
-
-      {/* 2. NETWORK UPLINK WIDGET */}
-      <AnimatePresence>
-        {showNetWidget && (
-          <TelemetryWidget
-            title="Network Uplink"
-            onClose={() => setShowNetWidget(false)}
-            positionClasses="bottom-10 right-10"
-          >
-            <NetworkWidget data={data} />
           </TelemetryWidget>
         )}
       </AnimatePresence>
