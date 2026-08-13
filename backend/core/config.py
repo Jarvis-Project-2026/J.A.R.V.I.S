@@ -44,6 +44,24 @@ class Settings:
     OBSIDIAN_HOST: str = os.getenv("OBSIDIAN_HOST")
     OBSIDIAN_API_KEY: str = os.getenv("OBSIDIAN_API_KEY")
 
+    # --- Configurações do Spotify (Web API — OAuth PKCE) ---
+    # PKCE não usa client_secret: o único segredo em disco é o refresh token.
+    SPOTIFY_CLIENT_ID: str = os.getenv("SPOTIFY_CLIENT_ID", "")
+    # ATENÇÃO: o Spotify só aceita HTTP em loopback e exige o IP literal.
+    # 'localhost' é REJEITADO no cadastro do app. Este valor precisa ser
+    # idêntico, byte a byte, ao registrado em developer.spotify.com/dashboard.
+    SPOTIFY_REDIRECT_URI: str = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8888/callback")
+    SPOTIFY_MARKET: str = os.getenv("SPOTIFY_MARKET", "BR")
+    SPOTIFY_SCOPES: str = (
+        "user-read-playback-state "
+        "user-modify-playback-state "
+        "user-read-currently-playing "
+        "playlist-read-private "
+        "playlist-read-collaborative"
+    )
+    SPOTIFY_AUTH_TIMEOUT: int = 120   # s — janela para o usuário autorizar no navegador
+    TIMEOUT_SPOTIFY: int = 8          # s — timeout de cada request à Web API
+
     # Adicionado: Timeouts Globais (Robustez de Rede)
     TIMEOUT_API: int = 10  # Segundos para esperar a IA responder
     TIMEOUT_VOICE: int = 5 # Segundos para esperar o reconhecimento de voz
@@ -70,6 +88,9 @@ class Settings:
     # --- Configurações do Banco de Dados ---
     DB_NAME: str = "jarvis_memory.db"
     DB_PATH = DIR_DATABASE / DB_NAME
+
+    # Credenciais do Spotify. Fora do Git (.gitignore) — contém refresh token.
+    SPOTIFY_TOKEN_PATH = DIR_DATABASE / "spotify_token.json"
 
     def get_current_log_path(self):
         """Retorna o caminho da pasta logs/ANO/MES e garante que ela exista."""

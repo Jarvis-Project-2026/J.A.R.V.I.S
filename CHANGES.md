@@ -335,3 +335,100 @@ backend/tests/test_intent_cache.py         # NOVO
 backend/tests/test_prompts_precompile.py   # NOVO
 backend/tests/test_llm_warmup.py           # NOVO
 ```
+
+---
+
+# Spotify na skill WORK_MACRO — janela maximizada e play confiável
+
+**Data:** 2026-08-07
+**Branch:** `Grolla`
+**Escopo:** reescrita do bloco de trilha sonora da skill `work_macros` + suíte de testes.
+
+---
+
+## Resumo
+
+| # | Problema | Severidade | Arquivos |
+|---|----------|------------|----------|
+| 1 | Tecla de mídia é *toggle* — **pausava** quem já estava ouvindo | Alta | `skills/automation/work_macros.py` |
+| 2 | Play retomava a última faixa, não a playlist recém-aberta | Alta | `skills/automation/work_macros.py` |
+| 3 | Janela do Spotify nunca era maximizada | Média | `skills/automation/work_macros.py` |
+| 4 | `time.sleep(3)` fixo em vez de esperar a janela existir | Média | `skills/automation/work_macros.py` |
+| 5 | `os.system(f"start {uri}")` interpolava a URI crua no `cmd` | Média | `skills/automation/work_macros.py` |
+| 6 | Spotify lançado duas vezes (lista `apps` + URI) | Baixa | `skills/automation/work_macros.py` |
+| 7 | `check_process_running()` — dead code com `if ... pass` vazio | Baixa | `skills/automation/work_macros.py` |
+
+---
+
+## 1-2. Play verificado em vez de tecla às cegas
+
+**Problema:** o bloco antigo abria a URI da playlist, dormia 3s e disparava `VK_MEDIA_PLAY_PAUSE`. Duas falhas graves: a tecla é um **toggle**, então se o usuário já estivesse ouvindo algo a macro **pausava** a música; e mesmo quando funcionava, a tecla retomava a **última faixa da sessão anterior**, não a playlist que acabara de ser aberta — abrir a URI apenas *navega* até a playlist.
+
+**Correção:** o título da janela do Spotify virou sensor de estado. Parado, o app se anuncia como `"Spotify"` / `"Spotify Premium"` / `"Spotify Free"`; tocando, como `"Artista - Faixa"`.
+
+- `_is_playing_title(title)` — helper puro que traduz título em estado booleano.
+- `_ensure_playing(hwnd)` — lê o estado **antes** de agir:
+  1. Já tocando → retorna sem tocar em nada (corrige o toggle).
+  2. Parado → foca a janela e envia `pyautogui.press('space')`, que toca o **contexto aberto** (a playlist), não a faixa antiga.
+  3. Relê o título; se ainda parado, cai no fallback `VK_MEDIA_PLAY_PAUSE`.
+  4. Relê de novo; se continuar parado, `log.warning` e retorna `False` — a macro segue normalmente.
+
+`pyautogui` entra por *late import* dentro da função, para não pesar no boot (o `SkillManager` executa o módulo inteiro na inicialização).
+
+**Antes:**
+
+```python
+os.system(f"start {spotify_uri}")
+time.sleep(3)
+VK_MEDIA_PLAY_PAUSE = 0xB3
+hwcode = ctypes.windll.user32.MapVirtualKeyA(VK_MEDIA_PLAY_PAUSE, 0)
+ctypes.windll.user32.keybd_event(VK_MEDIA_PLAY_PAUSE, hwcode, 0, 0)
+ctypes.windll.user32.keybd_event(VK_MEDIA_PLAY_PAUSE, hwcode, 2, 0)
+```
+
+**Depois:**
+
+```python
+if "playlist" in scene:
+    log.info(f"🎵 Iniciando trilha sonora: {scene['playlist']}")
+    _start_playlist(scene["playlist"])
+```
+
+## 3. Janela maximizada
+
+`_focus_and_maximize(hwnd)` aplica `ShowWindow(hwnd, SW_MAXIMIZE)` e traz a janela ao primeiro plano. O `SetForegroundWindow` é recusado pelo Windows quando o processo chamador não está em foreground — contornado com o truque canônico de emitir um `keybd_event(VK_MENU)` (press + release de ALT) imediatamente antes. Sem isso a janela maximiza mas fica atrás das outras, e o `Space` seguinte vai parar no app errado.
+
+## 4. Espera ativa pela janela
+
+`_wait_for_spotify_window()` faz *polling* a cada `0.5s` (teto de `15s`) em vez do `sleep(3)` no escuro — mais rápido em SSD, e não falha em máquina lenta.
+
+A busca do handle é **por PID**, não por título: `psutil` coleta os PIDs de `Spotify.exe`, depois `EnumWindows` + `GetWindowThreadProcessId` casa o HWND. Buscar por título quebraria exatamente no caso que importa — com música tocando o título é `"Artista - Faixa"` e não contém a palavra "Spotify". Filtro `IsWindowVisible` + título não-vazio descarta as janelas fantasma do Chromium.
+
+> O `time.sleep(3)` que antecede `organize_windows()` foi **mantido**: ele cobre o boot do VSCode para o Tiling Manager achar o `MainWindowHandle`, e a espera do Spotify retorna instantaneamente quando o app já estava aberto.
+
+## 5. URI validada antes do shell
+
+`_sanitize_spotify_uri()` passa a URI por `re.fullmatch(r"spotify:(playlist|album|track):[A-Za-z0-9]+")`, remove o sufixo `:play` legado e retorna `""` se não bater. A abertura virou `subprocess.Popen(["cmd", "/c", "start", "", uri], shell=False, creationflags=CREATE_NO_WINDOW)` — sem interpolação em shell e sem flash de console. A string vazia é o argumento de *título* que o `start` exige antes de uma URI.
+
+## 6-7. Limpeza
+
+- `"spotify"` removido de `SCENES["code"]["apps"]` e `SCENES["estudo"]["apps"]` — `_start_playlist` já lança o app pela URI. Economiza 1.5s de `sleep` e elimina a corrida entre os dois lançamentos. Há teste travando isso.
+- `check_process_running()` apagada — nunca era chamada e continha um bloco `if ... pass` vazio.
+
+---
+
+## Comportamento conhecido
+
+No modo `code` com **1 monitor**, o `organize_windows` roda depois e tila VSCode (70%) + navegador (30%) sobre a tela inteira: o Spotify fica maximizado **atrás** deles. Com 2+ monitores ele sobra no monitor livre.
+
+---
+
+## Arquivos alterados (Spotify)
+
+```
+backend/skills/automation/work_macros.py          # helpers + execute() + SCENES
+backend/docs/skills/automation/work_macros.md     # seção 4 reescrita + guia de manutenção
+backend/tests/test_work_macros_spotify.py         # NOVO — 12 testes
+```
+
+Testes: `cd backend && python -m pytest tests/ -q` → **55 passed**.
